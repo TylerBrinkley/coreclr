@@ -8,8 +8,10 @@ using System.Collections;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
-using System.Diagnostics;
+using Internal.Runtime.CompilerServices;
+using System.Collections.Generic;
+using shared.System.ComponentModel;
+using System.ComponentModel;
 
 // The code below includes partial support for float/double and
 // pointer sized enums.
@@ -35,1175 +37,1397 @@ namespace System
         #endregion
 
         #region Private Static Methods
-        private static TypeValuesAndNames GetCachedValuesAndNames(RuntimeType enumType, bool getNames)
+        internal static IEnumBridge GetBridge(Type enumType)
         {
-            TypeValuesAndNames entry = enumType.GenericCache as TypeValuesAndNames;
-
-            if (entry == null || (getNames && entry.Names == null))
+            if (enumType == null)
             {
-                ulong[] values = null;
-                string[] names = null;
-                bool isFlags = enumType.IsDefined(typeof(System.FlagsAttribute), false);
-
-                GetEnumValuesAndNames(
-                    enumType.GetTypeHandleInternal(),
-                    JitHelpers.GetObjectHandleOnStack(ref values),
-                    JitHelpers.GetObjectHandleOnStack(ref names),
-                    getNames);
-
-                entry = new TypeValuesAndNames(isFlags, values, names);
-                enumType.GenericCache = entry;
+                throw new ArgumentNullException(nameof(enumType));
             }
 
-            return entry;
+            RuntimeType rtType = enumType as RuntimeType;
+            if (rtType == null)
+            {
+                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
+            }
+
+            if (!enumType.IsEnum)
+            {
+                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
+            }
+
+            return GetBridge(rtType);
         }
 
-        private unsafe string InternalFormattedHexString()
+        private static IEnumBridge GetBridge(RuntimeType rtType)
         {
-            fixed (void* pValue = &JitHelpers.GetPinningHelper(this).m_data)
+            if (!(rtType.GenericCache is IEnumBridge bridge))
             {
-                switch (InternalGetCorElementType())
-                {
-                    case CorElementType.I1:
-                    case CorElementType.U1:
-                        return (*(byte*)pValue).ToString("X2", null);
-                    case CorElementType.Boolean:
-                        // direct cast from bool to byte is not allowed
-                        return Convert.ToByte(*(bool*)pValue).ToString("X2", null);
-                    case CorElementType.I2:
-                    case CorElementType.U2:
-                    case CorElementType.Char:
-                        return (*(ushort*)pValue).ToString("X4", null);
-                    case CorElementType.I4:
-                    case CorElementType.U4:
-                        return (*(uint*)pValue).ToString("X8", null);
-                    case CorElementType.I8:
-                    case CorElementType.U8:
-                        return (*(ulong*)pValue).ToString("X16", null);
-                    default:
-                        throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
-                }
+                bridge = (IEnumBridge)typeof(EnumBridge<>).MakeGenericType(rtType).GetField(nameof(EnumBridge<DayOfWeek>.Bridge), BindingFlags.Static | BindingFlags.Public).GetValue(null);
+                rtType.GenericCache = bridge;
             }
+
+            return bridge;
         }
 
-        private static string InternalFormattedHexString(object value)
+        private static Type GetUnderlyingTypeInternal(Type enumType)
         {
-            TypeCode typeCode = Convert.GetTypeCode(value);
-
-            switch (typeCode)
+            if (!enumType.IsEnum)
             {
-                case TypeCode.SByte:
-                    return ((byte)(sbyte)value).ToString("X2", null);
-                case TypeCode.Byte:
-                    return ((byte)value).ToString("X2", null);
-                case TypeCode.Boolean:
-                    // direct cast from bool to byte is not allowed
-                    return Convert.ToByte((bool)value).ToString("X2", null);
-                case TypeCode.Int16:
-                    return ((ushort)(short)value).ToString("X4", null);
-                case TypeCode.UInt16:
-                    return ((ushort)value).ToString("X4", null);
-                case TypeCode.Char:
-                    return ((ushort)(char)value).ToString("X4", null);
-                case TypeCode.UInt32:
-                    return ((uint)value).ToString("X8", null);
-                case TypeCode.Int32:
-                    return ((uint)(int)value).ToString("X8", null);
-                case TypeCode.UInt64:
-                    return ((ulong)value).ToString("X16", null);
-                case TypeCode.Int64:
-                    return ((ulong)(long)value).ToString("X16", null);
-                // All unsigned types will be directly cast
-                default:
-                    throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
+                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
             }
+
+            FieldInfo[] fields = enumType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (fields == null || fields.Length != 1)
+            {
+                throw new ArgumentException(SR.Argument_InvalidEnum, nameof(enumType));
+            }
+
+            return fields[0].FieldType;
         }
-
-        internal static string GetEnumName(RuntimeType eT, ulong ulValue)
-        {
-            Debug.Assert(eT != null);
-            ulong[] ulValues = Enum.InternalGetValues(eT);
-            int index = Array.BinarySearch(ulValues, ulValue);
-
-            if (index >= 0)
-            {
-                string[] names = Enum.InternalGetNames(eT);
-                return names[index];
-            }
-
-            return null; // return null so the caller knows to .ToString() the input
-        }
-
-        private static string InternalFormat(RuntimeType eT, ulong value)
-        {
-            Debug.Assert(eT != null);
-
-            // These values are sorted by value. Don't change this
-            TypeValuesAndNames entry = GetCachedValuesAndNames(eT, true);
-
-            if (!entry.IsFlag) // Not marked with Flags attribute
-            {
-                return Enum.GetEnumName(eT, value);
-            }
-            else // These are flags OR'ed together (We treat everything as unsigned types)
-            {
-                return InternalFlagsFormat(eT, entry, value);
-            }
-        }
-
-        private static string InternalFlagsFormat(RuntimeType eT, ulong result)
-        {
-            // These values are sorted by value. Don't change this
-            TypeValuesAndNames entry = GetCachedValuesAndNames(eT, true);
-
-            return InternalFlagsFormat(eT, entry, result);
-        }
-
-        private static string InternalFlagsFormat(RuntimeType eT, TypeValuesAndNames entry, ulong result)
-        {
-            Debug.Assert(eT != null);
-
-            string[] names = entry.Names;
-            ulong[] values = entry.Values;
-            Debug.Assert(names.Length == values.Length);
-
-            int index = values.Length - 1;
-            StringBuilder sb = StringBuilderCache.Acquire();
-            bool firstTime = true;
-            ulong saveResult = result;
-
-            // We will not optimize this code further to keep it maintainable. There are some boundary checks that can be applied
-            // to minimize the comparsions required. This code works the same for the best/worst case. In general the number of
-            // items in an enum are sufficiently small and not worth the optimization.
-            while (index >= 0)
-            {
-                if ((index == 0) && (values[index] == 0))
-                    break;
-
-                if ((result & values[index]) == values[index])
-                {
-                    result -= values[index];
-                    if (!firstTime)
-                        sb.Insert(0, enumSeparatorString);
-
-                    sb.Insert(0, names[index]);
-                    firstTime = false;
-                }
-
-                index--;
-            }
-
-            string returnString;
-            if (result != 0)
-            {
-                // We were unable to represent this number as a bitwise or of valid flags
-                returnString = null; // return null so the caller knows to .ToString() the input
-            }
-            else if (saveResult == 0)
-            {
-                // For the cases when we have zero
-                if (values.Length > 0 && values[0] == 0)
-                {
-                    returnString = names[0]; // Zero was one of the enum values.
-                }
-                else
-                {
-                    returnString = "0";
-                }
-            }
-            else
-            {
-                returnString = sb.ToString(); // Return the string representation
-            }
-
-            StringBuilderCache.Release(sb);
-            return returnString;
-        }
-
-        internal static ulong ToUInt64(object value)
-        {
-            // Helper function to silently convert the value to UInt64 from the other base types for enum without throwing an exception.
-            // This is need since the Convert functions do overflow checks.
-            TypeCode typeCode = Convert.GetTypeCode(value);
-
-            ulong result;
-            switch (typeCode)
-            {
-                case TypeCode.SByte:
-                    result = (ulong)(sbyte)value;
-                    break;
-                case TypeCode.Byte:
-                    result = (byte)value;
-                    break;
-                case TypeCode.Boolean:
-                    // direct cast from bool to byte is not allowed
-                    result = Convert.ToByte((bool)value);
-                    break;
-                case TypeCode.Int16:
-                    result = (ulong)(short)value;
-                    break;
-                case TypeCode.UInt16:
-                    result = (ushort)value;
-                    break;
-                case TypeCode.Char:
-                    result = (ushort)(char)value;
-                    break;
-                case TypeCode.UInt32:
-                    result = (uint)value;
-                    break;
-                case TypeCode.Int32:
-                    result = (ulong)(int)value;
-                    break;
-                case TypeCode.UInt64:
-                    result = (ulong)value;
-                    break;
-                case TypeCode.Int64:
-                    result = (ulong)(long)value;
-                    break;
-                // All unsigned types will be directly cast
-                default:
-                    throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
-            }
-
-            return result;
-        }
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        private static extern int InternalCompareTo(object o1, object o2);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        internal static extern RuntimeType InternalGetUnderlyingType(RuntimeType enumType);
-
-        [DllImport(JitHelpers.QCall, CharSet = CharSet.Unicode)]
-        private static extern void GetEnumValuesAndNames(RuntimeTypeHandle enumType, ObjectHandleOnStack values, ObjectHandleOnStack names, bool getNames);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        private static extern object InternalBoxEnum(RuntimeType enumType, long value);
         #endregion
 
         #region Public Static Methods
-        private enum ParseFailureKind
-        {
-            None = 0,
-            Argument = 1,
-            ArgumentNull = 2,
-            ArgumentWithParameter = 3,
-            UnhandledException = 4
-        }
+        public static bool TryParse(Type enumType, string value, out object result) => TryParse(enumType, value.AsSpan(), false, out result);
 
-        // This will store the result of the parsing.
-        private struct EnumResult
-        {
-            internal object parsedEnum;
-            internal bool canThrow;
-            internal ParseFailureKind m_failure;
-            internal string m_failureMessageID;
-            internal string m_failureParameter;
-            internal object m_failureMessageFormatArgument;
-            internal Exception m_innerException;
+        public static bool TryParse(Type enumType, string value, bool ignoreCase, out object result) => TryParse(enumType, value.AsSpan(), ignoreCase, out result);
 
-            internal void SetFailure(Exception unhandledException)
-            {
-                m_failure = ParseFailureKind.UnhandledException;
-                m_innerException = unhandledException;
-            }
-            internal void SetFailure(ParseFailureKind failure, string failureParameter)
-            {
-                m_failure = failure;
-                m_failureParameter = failureParameter;
-                if (canThrow)
-                    throw GetEnumParseException();
-            }
-            internal void SetFailure(ParseFailureKind failure, string failureMessageID, object failureMessageFormatArgument)
-            {
-                m_failure = failure;
-                m_failureMessageID = failureMessageID;
-                m_failureMessageFormatArgument = failureMessageFormatArgument;
-                if (canThrow)
-                    throw GetEnumParseException();
-            }
-            internal Exception GetEnumParseException()
-            {
-                switch (m_failure)
-                {
-                    case ParseFailureKind.Argument:
-                        return new ArgumentException(SR.GetResourceString(m_failureMessageID));
+        public static bool TryParse(Type enumType, ReadOnlySpan<char> value, out object result) => TryParse(enumType, value, false, out result);
 
-                    case ParseFailureKind.ArgumentNull:
-                        return new ArgumentNullException(m_failureParameter);
+        public static bool TryParse(Type enumType, ReadOnlySpan<char> value, bool ignoreCase, out object result) => GetBridge(enumType).TryParse(value, ignoreCase, out result);
 
-                    case ParseFailureKind.ArgumentWithParameter:
-                        return new ArgumentException(SR.Format(SR.GetResourceString(m_failureMessageID), m_failureMessageFormatArgument));
+        public static bool TryParse<TEnum>(string value, out TEnum result) where TEnum : struct, Enum => TryParse(value.AsSpan(), false, out result);
 
-                    case ParseFailureKind.UnhandledException:
-                        return m_innerException;
+        public static bool TryParse<TEnum>(string value, bool ignoreCase, out TEnum result) where TEnum : struct, Enum => TryParse(value.AsSpan(), ignoreCase, out result);
 
-                    default:
-                        Debug.Fail("Unknown EnumParseFailure: " + m_failure);
-                        return new ArgumentException(SR.Arg_EnumValueNotFound);
-                }
-            }
-        }
+        public static bool TryParse<TEnum>(ReadOnlySpan<char> value, out TEnum result) where TEnum : struct, Enum => TryParse(value, false, out result);
 
-        public static bool TryParse(Type enumType, string value, out object result)
-        {
-            return TryParse(enumType, value, false, out result);
-        }
+        public static bool TryParse<TEnum>(ReadOnlySpan<char> value, bool ignoreCase, out TEnum result) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.TryParse(value, ignoreCase, out result);
 
-        public static bool TryParse(Type enumType, string value, bool ignoreCase, out object result)
-        {
-            result = null;
-            EnumResult parseResult = new EnumResult();
-            bool retValue;
+        public static object Parse(Type enumType, string value) => Parse(enumType, value.AsSpan(), false);
 
-            if (retValue = TryParseEnum(enumType, value, ignoreCase, ref parseResult))
-                result = parseResult.parsedEnum;
-            return retValue;
-        }
+        public static object Parse(Type enumType, string value, bool ignoreCase) => Parse(enumType, value.AsSpan(), ignoreCase);
 
-        public static bool TryParse<TEnum>(string value, out TEnum result) where TEnum : struct
-        {
-            return TryParse(value, false, out result);
-        }
+        public static object Parse(Type enumType, ReadOnlySpan<char> value) => Parse(enumType, value, false);
 
-        public static bool TryParse<TEnum>(string value, bool ignoreCase, out TEnum result) where TEnum : struct
-        {
-            result = default;
-            EnumResult parseResult = new EnumResult();
-            bool retValue;
+        public static object Parse(Type enumType, ReadOnlySpan<char> value, bool ignoreCase) => GetBridge(enumType).Parse(value, ignoreCase);
 
-            if (retValue = TryParseEnum(typeof(TEnum), value, ignoreCase, ref parseResult))
-                result = (TEnum)parseResult.parsedEnum;
-            return retValue;
-        }
+        public static TEnum Parse<TEnum>(string value) where TEnum : struct, Enum => Parse<TEnum>(value.AsSpan(), false);
 
-        public static object Parse(Type enumType, string value)
-        {
-            return Parse(enumType, value, false);
-        }
+        public static TEnum Parse<TEnum>(string value, bool ignoreCase) where TEnum : struct, Enum => Parse<TEnum>(value.AsSpan(), ignoreCase);
 
-        public static object Parse(Type enumType, string value, bool ignoreCase)
-        {
-            EnumResult parseResult = new EnumResult() { canThrow = true };
-            if (TryParseEnum(enumType, value, ignoreCase, ref parseResult))
-                return parseResult.parsedEnum;
-            else
-                throw parseResult.GetEnumParseException();
-        }
+        public static TEnum Parse<TEnum>(ReadOnlySpan<char> value) where TEnum : struct, Enum => Parse<TEnum>(value, false);
 
-        public static TEnum Parse<TEnum>(string value) where TEnum : struct
-        {
-            return Parse<TEnum>(value, false);
-        }
+        public static TEnum Parse<TEnum>(ReadOnlySpan<char> value, bool ignoreCase) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.Parse(value, ignoreCase);
 
-        public static TEnum Parse<TEnum>(string value, bool ignoreCase) where TEnum : struct
-        {
-            EnumResult parseResult = new EnumResult() { canThrow = true };
-            if (TryParseEnum(typeof(TEnum), value, ignoreCase, ref parseResult))
-                return (TEnum)parseResult.parsedEnum;
-            else
-                throw parseResult.GetEnumParseException();
-        }
+        public static Type GetUnderlyingType(Type enumType) => GetBridge(enumType).UnderlyingType;
 
-        private static bool TryParseEnum(Type enumType, string value, bool ignoreCase, ref EnumResult parseResult)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
+        public static Type GetUnderlyingType<TEnum>() where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.UnderlyingType;
 
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
+        public static Array GetValues(Type enumType) => GetBridge(enumType).GetValues();
 
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
+        public static IEnumerable<TEnum> GetValues<TEnum>() where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.GetValues();
 
-            if (value == null)
-            {
-                parseResult.SetFailure(ParseFailureKind.ArgumentNull, nameof(value));
-                return false;
-            }
+        public static string GetName(Type enumType, object value) => GetBridge(enumType).GetName(value);
 
-            int firstNonWhitespaceIndex = -1;
-            for (int i = 0; i < value.Length; i++)
-            {
-                if (!char.IsWhiteSpace(value[i]))
-                {
-                    firstNonWhitespaceIndex = i;
-                    break;
-                }
-            }
-            if (firstNonWhitespaceIndex == -1)
-            {
-                parseResult.SetFailure(ParseFailureKind.Argument, nameof(SR.Arg_MustContainEnumInfo), null);
-                return false;
-            }
-
-            // We have 2 code paths here. One if they are values else if they are Strings.
-            // values will have the first character as as number or a sign.
-            ulong result = 0;
-
-            char firstNonWhitespaceChar = value[firstNonWhitespaceIndex];
-            if (char.IsDigit(firstNonWhitespaceChar) || firstNonWhitespaceChar == '-' || firstNonWhitespaceChar == '+')
-            {
-                Type underlyingType = GetUnderlyingType(enumType);
-                object temp;
-
-                try
-                {
-                    value = value.Trim();
-                    temp = Convert.ChangeType(value, underlyingType, CultureInfo.InvariantCulture);
-                    parseResult.parsedEnum = ToObject(enumType, temp);
-                    return true;
-                }
-                catch (FormatException)
-                { // We need to Parse this as a String instead. There are cases
-                  // when you tlbimp enums that can have values of the form "3D".
-                  // Don't fix this code.
-                }
-                catch (Exception ex)
-                {
-                    if (parseResult.canThrow)
-                        throw;
-                    else
-                    {
-                        parseResult.SetFailure(ex);
-                        return false;
-                    }
-                }
-            }
-
-            // Find the field. Let's assume that these are always static classes 
-            // because the class is an enum.
-            TypeValuesAndNames entry = GetCachedValuesAndNames(rtType, true);
-            string[] enumNames = entry.Names;
-            ulong[] enumValues = entry.Values;
-
-            StringComparison comparison = ignoreCase ?
-                StringComparison.OrdinalIgnoreCase :
-                StringComparison.Ordinal;
-
-            int valueIndex = firstNonWhitespaceIndex;
-            while (valueIndex <= value.Length) // '=' is to handle invalid case of an ending comma
-            {
-                // Find the next separator, if there is one, otherwise the end of the string.
-                int endIndex = value.IndexOf(enumSeparatorChar, valueIndex);
-                if (endIndex == -1)
-                {
-                    endIndex = value.Length;
-                }
-
-                // Shift the starting and ending indices to eliminate whitespace
-                int endIndexNoWhitespace = endIndex;
-                while (valueIndex < endIndex && char.IsWhiteSpace(value[valueIndex])) valueIndex++;
-                while (endIndexNoWhitespace > valueIndex && char.IsWhiteSpace(value[endIndexNoWhitespace - 1])) endIndexNoWhitespace--;
-                int valueSubstringLength = endIndexNoWhitespace - valueIndex;
-
-                // Try to match this substring against each enum name
-                bool success = false;
-                for (int i = 0; i < enumNames.Length; i++)
-                {
-                    if (enumNames[i].Length == valueSubstringLength &&
-                        string.Compare(enumNames[i], 0, value, valueIndex, valueSubstringLength, comparison) == 0)
-                    {
-                        result |= enumValues[i];
-                        success = true;
-                        break;
-                    }
-                }
-
-                // If we couldn't find a match, throw an argument exception.
-                if (!success)
-                {
-                    // Not found, throw an argument exception.
-                    parseResult.SetFailure(ParseFailureKind.ArgumentWithParameter, nameof(SR.Arg_EnumValueNotFound), value);
-                    return false;
-                }
-
-                // Move our pointer to the ending index to go again.
-                valueIndex = endIndex + 1;
-            }
-
-            try
-            {
-                parseResult.parsedEnum = ToObject(enumType, result);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                if (parseResult.canThrow)
-                    throw;
-                else
-                {
-                    parseResult.SetFailure(ex);
-                    return false;
-                }
-            }
-        }
-
-        public static Type GetUnderlyingType(Type enumType)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-
-            return enumType.GetEnumUnderlyingType();
-        }
-
-        public static Array GetValues(Type enumType)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-
-            return enumType.GetEnumValues();
-        }
-
-        internal static ulong[] InternalGetValues(RuntimeType enumType)
-        {
-            // Get all of the values
-            return GetCachedValuesAndNames(enumType, false).Values;
-        }
-
-        public static string GetName(Type enumType, object value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-
-            return enumType.GetEnumName(value);
-        }
+        public static string GetName<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.GetName(value);
 
         public static string[] GetNames(Type enumType)
         {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
+            IEnumBridge bridge = GetBridge(enumType);
 
-            return enumType.GetEnumNames();
-        }
-
-        internal static string[] InternalGetNames(RuntimeType enumType)
-        {
-            // Get all of the names
-            return GetCachedValuesAndNames(enumType, true).Names;
-        }
-
-        public static object ToObject(Type enumType, object value)
-        {
-            if (value == null)
-                throw new ArgumentNullException(nameof(value));
-
-            // Delegate rest of error checking to the other functions
-            TypeCode typeCode = Convert.GetTypeCode(value);
-
-            switch (typeCode)
+            string[] names = new string[bridge.Count];
+            int i = 0;
+            foreach (string name in bridge.GetNames())
             {
-                case TypeCode.Int32:
-                    return ToObject(enumType, (int)value);
-
-                case TypeCode.SByte:
-                    return ToObject(enumType, (sbyte)value);
-
-                case TypeCode.Int16:
-                    return ToObject(enumType, (short)value);
-
-                case TypeCode.Int64:
-                    return ToObject(enumType, (long)value);
-
-                case TypeCode.UInt32:
-                    return ToObject(enumType, (uint)value);
-
-                case TypeCode.Byte:
-                    return ToObject(enumType, (byte)value);
-
-                case TypeCode.UInt16:
-                    return ToObject(enumType, (ushort)value);
-
-                case TypeCode.UInt64:
-                    return ToObject(enumType, (ulong)value);
-
-                case TypeCode.Char:
-                    return ToObject(enumType, (char)value);
-
-                case TypeCode.Boolean:
-                    return ToObject(enumType, (bool)value);
-
-                default:
-                    // All unsigned types will be directly cast
-                    throw new ArgumentException(SR.Arg_MustBeEnumBaseTypeOrEnum, nameof(value));
-            }
-        }
-
-        public static bool IsDefined(Type enumType, object value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-
-            return enumType.IsEnumDefined(value);
-        }
-
-        public static string Format(Type enumType, object value, string format)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-
-            if (value == null)
-                throw new ArgumentNullException(nameof(value));
-
-            if (format == null)
-                throw new ArgumentNullException(nameof(format));
-
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-
-            // Check if both of them are of the same type
-            Type valueType = value.GetType();
-
-            Type underlyingType = GetUnderlyingType(enumType);
-
-            // If the value is an Enum then we need to extract the underlying value from it
-            if (valueType.IsEnum)
-            {
-                if (!valueType.IsEquivalentTo(enumType))
-                    throw new ArgumentException(SR.Format(SR.Arg_EnumAndObjectMustBeSameType, valueType.ToString(), enumType.ToString()));
-
-                if (format.Length != 1)
-                {
-                    // all acceptable format string are of length 1
-                    throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
-                }
-                return ((Enum)value).ToString(format);
-            }
-            // The value must be of the same type as the Underlying type of the Enum
-            else if (valueType != underlyingType)
-            {
-                throw new ArgumentException(SR.Format(SR.Arg_EnumFormatUnderlyingTypeAndObjectMustBeSameType, valueType.ToString(), underlyingType.ToString()));
-            }
-            if (format.Length != 1)
-            {
-                // all acceptable format string are of length 1
-                throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
+                names[i] = name;
+                ++i;
             }
 
-            char formatCh = format[0];
-            if (formatCh == 'G' || formatCh == 'g')
-                return GetEnumName(rtType, ToUInt64(value)) ?? value.ToString();
-
-            if (formatCh == 'D' || formatCh == 'd')
-                return value.ToString();
-
-            if (formatCh == 'X' || formatCh == 'x')
-                return InternalFormattedHexString(value);
-
-            if (formatCh == 'F' || formatCh == 'f')
-                return Enum.InternalFlagsFormat(rtType, ToUInt64(value)) ?? value.ToString();
-
-            throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
+            return names;
         }
 
+        public static IEnumerable<string> GetNames<TEnum>() where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.GetNames();
+
+        public static object ToObject(Type enumType, object value) => GetBridge(enumType).ToObject(value);
+
+        public static TEnum ToObject<TEnum>(object value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+
+        public static bool IsDefined(Type enumType, object value) => GetBridge(enumType).IsDefined(value);
+
+        public static bool IsDefined<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.IsDefined(value);
+
+        public static string Format(Type enumType, object value, string format) => GetBridge(enumType).Format(value, format);
+
+        public static string Format<TEnum>(TEnum value, string format) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.Format(value, format);
         #endregion
 
         #region Definitions
-        private class TypeValuesAndNames
+        internal static class EnumBridge<TEnum> where TEnum : struct, Enum
         {
-            // Each entry contains a list of sorted pair of enum field names and values, sorted by values
-            public TypeValuesAndNames(bool isFlag, ulong[] values, string[] names)
+            public readonly static IEnumBridge<TEnum> Bridge = CreateEnumBridge();
+
+            private static IEnumBridge<TEnum> CreateEnumBridge()
             {
-                this.IsFlag = isFlag;
-                this.Values = values;
-                this.Names = names;
+                Type underlyingType = GetUnderlyingTypeInternal(typeof(TEnum));
+                switch (Type.GetTypeCode(underlyingType))
+                {
+                    case TypeCode.SByte:
+                        return new EnumBridge<TEnum, sbyte, SByteOperators>();
+                    case TypeCode.Byte:
+                        return new EnumBridge<TEnum, byte, ByteOperators>();
+                    case TypeCode.Int16:
+                        return new EnumBridge<TEnum, short, Int16Operators>();
+                    case TypeCode.UInt16:
+                        return new EnumBridge<TEnum, ushort, UInt16Operators>();
+                    case TypeCode.Int32:
+                        return new EnumBridge<TEnum, int, Int32Operators>();
+                    case TypeCode.UInt32:
+                        return new EnumBridge<TEnum, uint, UInt32Operators>();
+                    case TypeCode.Int64:
+                        return new EnumBridge<TEnum, long, Int64Operators>();
+                    case TypeCode.UInt64:
+                        return new EnumBridge<TEnum, ulong, UInt64Operators>();
+                    case TypeCode.Boolean:
+                        return new EnumBridge<TEnum, bool, BooleanOperators>();
+                    case TypeCode.Char:
+                        return new EnumBridge<TEnum, char, CharOperators>();
+                }
+                throw new NotSupportedException($"Enum underlying type of {underlyingType} is not supported");
+            }
+        }
+
+        internal interface IEnumBridgeCommon
+        {
+            bool IsFlagEnum { get; }
+            Type UnderlyingType { get; }
+            int Count { get; }
+            TypeCode TypeCode { get; }
+
+            IEnumerable<string> GetNames();
+        }
+
+        internal interface IEnumBridge : IEnumBridgeCommon
+        {
+            object AllFlags { get; }
+
+            object CombineFlags(IEnumerable<object> flags);
+            object CombineFlags(object value, object flags);
+            object CommonFlags(object value, object flags);
+            int CompareTo(Enum value, object other);
+            bool Equals(Enum value, object other);
+            string Format(object value, string format);
+            IEnumerable GetFlags(object value);
+            int GetHashCode(Enum value);
+            string GetName(object value);
+            Array GetValues();
+            object GetUnderlyingValue(Enum value);
+            bool HasAllFlags(object value);
+            bool HasAllFlags(object value, object flags);
+            bool HasAnyFlags(object value);
+            bool HasAnyFlags(object value, object flags);
+            bool IsDefined(object value);
+            bool IsValidFlagCombination(object value);
+            object Parse(ReadOnlySpan<char> value, bool ignoreCase);
+            object RemoveFlags(object value, object flags);
+            bool ToBoolean(Enum value);
+            byte ToByte(Enum value);
+            char ToChar(Enum value);
+            decimal ToDecimal(Enum value);
+            double ToDouble(Enum value);
+            short ToInt16(Enum value);
+            int ToInt32(Enum value);
+            long ToInt64(Enum value);
+            object ToObject(long value);
+            object ToObject(object value);
+            object ToObject(ulong value);
+            sbyte ToSByte(Enum value);
+            float ToSingle(Enum value);
+            string ToString(Enum value);
+            string ToString(Enum value, string format);
+            ushort ToUInt16(Enum value);
+            uint ToUInt32(Enum value);
+            ulong ToUInt64(Enum value);
+            bool TryParse(ReadOnlySpan<char> value, bool ignoreCase, out object result);
+        }
+
+        internal interface IEnumBridge<TEnum> : IEnumBridgeCommon where TEnum : struct, Enum
+        {
+            TEnum AllFlags { get; }
+
+            TEnum CombineFlags(IEnumerable<TEnum> flags);
+            TEnum CombineFlags(TEnum value, TEnum flags);
+            TEnum CommonFlags(TEnum value, TEnum flags);
+            int CompareTo(TEnum value, TEnum other);
+            bool Equals(TEnum value, TEnum other);
+            string Format(TEnum value, string format);
+            IEnumerable<TEnum> GetFlags(TEnum value);
+            string GetName(TEnum value);
+            IEnumerable<TEnum> GetValues();
+            bool HasAllFlags(TEnum value);
+            bool HasAllFlags(TEnum value, TEnum flags);
+            bool HasAnyFlags(TEnum value);
+            bool HasAnyFlags(TEnum value, TEnum flags);
+            bool IsDefined(TEnum value);
+            bool IsValidFlagCombination(TEnum value);
+            TEnum Parse(ReadOnlySpan<char> value, bool ignoreCase);
+            TEnum RemoveFlags(TEnum value, TEnum flags);
+            byte ToByte(TEnum value);
+            short ToInt16(TEnum value);
+            int ToInt32(TEnum value);
+            long ToInt64(TEnum value);
+            TEnum ToObject(long value);
+            TEnum ToObject(object value);
+            TEnum ToObject(ulong value);
+            sbyte ToSByte(TEnum value);
+            string ToString(TEnum value);
+            string ToString(TEnum value, string format);
+            ushort ToUInt16(TEnum value);
+            uint ToUInt32(TEnum value);
+            ulong ToUInt64(TEnum value);
+            bool TryParse(ReadOnlySpan<char> value, bool ignoreCase, out TEnum result);
+        }
+
+        private sealed class EnumBridge<TEnum, TUnderlying, TUnderlyingOperators> : IEnumBridge<TEnum>, IEnumBridge
+            where TEnum : struct, Enum
+            where TUnderlying : struct, IComparable<TUnderlying>, IEquatable<TUnderlying>, IConvertible
+            where TUnderlyingOperators : struct, IUnderlyingOperators<TUnderlying>
+        {
+            private static readonly TUnderlyingOperators s_operators = new TUnderlyingOperators();
+
+            private static readonly EnumCache<TUnderlying, TUnderlyingOperators> s_cache = new EnumCache<TUnderlying, TUnderlyingOperators>(typeof(TEnum));
+
+            private static TUnderlying ToUnderlying(TEnum value) => Unsafe.As<TEnum, TUnderlying>(ref value);
+
+            private static TEnum ToEnum(TUnderlying value) => Unsafe.As<TUnderlying, TEnum>(ref value);
+
+            public TEnum Parse(ReadOnlySpan<char> value, bool ignoreCase) => ToEnum(s_cache.Parse(value, ignoreCase));
+
+            public bool TryParse(ReadOnlySpan<char> value, bool ignoreCase, out TEnum result)
+            {
+                bool success = s_cache.TryParse(value, ignoreCase, out TUnderlying underlying);
+                result = ToEnum(underlying);
+                return success;
             }
 
-            public bool IsFlag;
-            public ulong[] Values;
-            public string[] Names;
+            public int CompareTo(TEnum value, TEnum other) => ToUnderlying(value).CompareTo(ToUnderlying(other));
+
+            public bool Equals(TEnum value, TEnum other) => ToUnderlying(value).Equals(ToUnderlying(other));
+
+            public string Format(TEnum value, string format) => s_cache.Format(ToUnderlying(value), format);
+
+            public string GetName(TEnum value) => s_cache.GetName(ToUnderlying(value));
+
+            public IEnumerable<string> GetNames() => s_cache.GetNames();
+
+            public Type UnderlyingType { get; } = typeof(TUnderlying);
+
+            public TypeCode TypeCode { get; } = Type.GetTypeCode(typeof(TUnderlying));
+
+            public IEnumerable<TEnum> GetValues()
+            {
+                int dupeIndex = 0;
+                List<EnumCache<TUnderlying, TUnderlyingOperators>.EnumMemberInternal> duplicateValues = s_cache._duplicateValues;
+                TUnderlying nextDupeValue = duplicateValues != null ? duplicateValues[dupeIndex].Value : default;
+                foreach (KeyValuePair<TUnderlying, EnumCache<TUnderlying, TUnderlyingOperators>.EnumMemberInternal> pair in s_cache._valueMap)
+                {
+                    yield return ToEnum(pair.Key);
+                    while (dupeIndex < duplicateValues?.Count && nextDupeValue.Equals(pair.Key))
+                    {
+                        yield return ToEnum(nextDupeValue);
+                        ++dupeIndex;
+                        if (dupeIndex < duplicateValues.Count)
+                        {
+                            nextDupeValue = duplicateValues[dupeIndex].Value;
+                        }
+                    }
+                }
+            }
+
+            public bool IsDefined(TEnum value) => s_cache.IsDefined(ToUnderlying(value));
+
+            public byte ToByte(TEnum value) => ToUnderlying(value).ToByte(CultureInfo.CurrentCulture);
+
+            public short ToInt16(TEnum value) => ToUnderlying(value).ToInt16(CultureInfo.CurrentCulture);
+
+            public int ToInt32(TEnum value) => ToUnderlying(value).ToInt32(CultureInfo.CurrentCulture);
+
+            public long ToInt64(TEnum value) => ToUnderlying(value).ToInt64(CultureInfo.CurrentCulture);
+
+            public TEnum ToObject(object value) => ToEnum(s_cache.ToObject(value));
+
+            public TEnum ToObject(long value) => ToEnum(s_cache.ToObject(value));
+
+            public TEnum ToObject(ulong value) => ToEnum(s_cache.ToObject(value));
+
+            public sbyte ToSByte(TEnum value) => ToUnderlying(value).ToSByte(CultureInfo.CurrentCulture);
+
+            public string ToString(TEnum value) => s_cache.ToString(ToUnderlying(value));
+
+            public string ToString(TEnum value, string format) => s_cache.ToString(ToUnderlying(value), format);
+
+            public ushort ToUInt16(TEnum value) => ToUnderlying(value).ToUInt16(CultureInfo.CurrentCulture);
+
+            public uint ToUInt32(TEnum value) => ToUnderlying(value).ToUInt32(CultureInfo.CurrentCulture);
+
+            public ulong ToUInt64(TEnum value) => ToUnderlying(value).ToUInt64(CultureInfo.CurrentCulture);
+
+            public TEnum AllFlags => ToEnum(s_cache._allFlags);
+
+            public TEnum CombineFlags(TEnum value, TEnum flags) => ToEnum(s_operators.Or(ToUnderlying(value), ToUnderlying(flags)));
+
+            public TEnum CombineFlags(IEnumerable<TEnum> flags)
+            {
+                TUnderlying result = s_operators.Zero;
+                foreach (TEnum flag in flags)
+                {
+                    result = s_operators.Or(result, ToUnderlying(flag));
+                }
+                return ToEnum(result);
+            }
+
+            public TEnum CommonFlags(TEnum value, TEnum flags) => ToEnum(s_operators.And(ToUnderlying(value), ToUnderlying(flags)));
+
+            public IEnumerable<TEnum> GetFlags(TEnum value)
+            {
+                TUnderlying validValue = s_operators.And(ToUnderlying(value), s_cache._allFlags);
+                bool isLessThanZero = s_operators.LessThan(validValue, s_operators.Zero);
+                for (TUnderlying currentValue = s_operators.One; (isLessThanZero || !s_operators.LessThan(validValue, currentValue)) && !currentValue.Equals(s_operators.Zero); currentValue = s_operators.LeftShift(currentValue, 1))
+                {
+                    if (!s_operators.Or(validValue, currentValue).Equals(s_operators.Zero))
+                    {
+                        yield return ToEnum(currentValue);
+                    }
+                }
+            }
+
+            public bool HasAllFlags(TEnum value) => ToUnderlying(value).Equals(s_cache._allFlags);
+
+            public bool HasAllFlags(TEnum value, TEnum flags) => s_operators.Or(ToUnderlying(value), ToUnderlying(flags)).Equals(ToUnderlying(flags));
+
+            public bool HasAnyFlags(TEnum value) => !ToUnderlying(value).Equals(s_operators.Zero);
+
+            public bool HasAnyFlags(TEnum value, TEnum flags) => !s_operators.And(ToUnderlying(value), ToUnderlying(flags)).Equals(s_operators.Zero);
+
+            public bool IsFlagEnum => s_cache._isFlagEnum;
+
+            public bool IsValidFlagCombination(TEnum value) => s_operators.And(ToUnderlying(value), s_cache._allFlags).Equals(ToUnderlying(value));
+
+            public int Count => s_cache._valueMap.Count + (s_cache._duplicateValues?.Count ?? 0);
+
+            #region IEnumBridge
+            object IEnumBridge.AllFlags => AllFlags;
+
+            public TEnum RemoveFlags(TEnum value, TEnum flags) => ToEnum(s_operators.And(ToUnderlying(value), s_operators.Not(ToUnderlying(flags))));
+
+            public object CombineFlags(IEnumerable<object> flags) => throw new NotImplementedException();
+
+            public object CombineFlags(object value, object flags) => throw new NotImplementedException();
+
+            public object CommonFlags(object value, object flags) => throw new NotImplementedException();
+
+            public int CompareTo(Enum value, object other) => throw new NotImplementedException();
+
+            public bool Equals(Enum value, object other) => throw new NotImplementedException();
+
+            public string Format(object value, string format) => throw new NotImplementedException();
+
+            public IEnumerable GetFlags(object value) => throw new NotImplementedException();
+
+            public int GetHashCode(Enum value) => ToUnderlying((TEnum)value).GetHashCode();
+
+            public string GetName(object value) => throw new NotImplementedException();
+
+            public object GetUnderlyingValue(Enum value) => ToUnderlying((TEnum)value);
+
+            Array IEnumBridge.GetValues()
+            {
+                TEnum[] array = new TEnum[Count];
+                int i = 0;
+                foreach (TEnum value in GetValues())
+                {
+                    array[i] = value;
+                    ++i;
+                }
+                return array;
+            }
+
+            public bool HasAllFlags(object value) => throw new NotImplementedException();
+
+            public bool HasAllFlags(object value, object flags) => throw new NotImplementedException();
+
+            public bool HasAnyFlags(object value) => throw new NotImplementedException();
+
+            public bool HasAnyFlags(object value, object flags) => throw new NotImplementedException();
+
+            public bool IsDefined(object value) => throw new NotImplementedException();
+
+            public bool IsValidFlagCombination(object value) => throw new NotImplementedException();
+
+            object IEnumBridge.Parse(ReadOnlySpan<char> value, bool ignoreCase) => Parse(value, ignoreCase);
+
+            public object RemoveFlags(object value, object flags) => throw new NotImplementedException();
+
+            public bool ToBoolean(Enum value) => ToUnderlying((TEnum)value).ToBoolean(CultureInfo.CurrentCulture);
+
+            public byte ToByte(Enum value) => ToByte((TEnum)value);
+
+            public char ToChar(Enum value) => ToUnderlying((TEnum)value).ToChar(CultureInfo.CurrentCulture);
+
+            public decimal ToDecimal(Enum value) => ToUnderlying((TEnum)value).ToDecimal(CultureInfo.CurrentCulture);
+
+            public double ToDouble(Enum value) => ToUnderlying((TEnum)value).ToDouble(CultureInfo.CurrentCulture);
+
+            public short ToInt16(Enum value) => ToInt16((TEnum)value);
+
+            public int ToInt32(Enum value) => ToInt32((TEnum)value);
+
+            public long ToInt64(Enum value) => ToInt64((TEnum)value);
+
+            object IEnumBridge.ToObject(long value) => ToObject(value);
+
+            object IEnumBridge.ToObject(object value) => ToObject(value);
+
+            object IEnumBridge.ToObject(ulong value) => ToObject(value);
+
+            public sbyte ToSByte(Enum value) => ToSByte((TEnum)value);
+
+            public float ToSingle(Enum value) => ToUnderlying((TEnum)value).ToSingle(CultureInfo.CurrentCulture);
+
+            public string ToString(Enum value) => ToString((TEnum)value);
+
+            public string ToString(Enum value, string format) => ToString((TEnum)value, format);
+
+            public ushort ToUInt16(Enum value) => ToUInt16((TEnum)value);
+
+            public uint ToUInt32(Enum value) => ToUInt32((TEnum)value);
+
+            public ulong ToUInt64(Enum value) => ToUInt64((TEnum)value);
+
+            public bool TryParse(ReadOnlySpan<char> value, bool ignoreCase, out object result)
+            {
+                bool success = TryParse(value, ignoreCase, out TEnum enumResult);
+                result = success ? (object)enumResult : null;
+                return success;
+            }
+            #endregion
         }
+
+        private sealed class EnumCache<TUnderlying, TUnderlyingOperators>
+            where TUnderlying : struct, IComparable<TUnderlying>, IEquatable<TUnderlying>, IConvertible
+            where TUnderlyingOperators : struct, IUnderlyingOperators<TUnderlying>
+        {
+            internal static readonly TUnderlyingOperators s_operators = new TUnderlyingOperators();
+
+            internal readonly TUnderlying _allFlags;
+
+            internal readonly bool _isFlagEnum;
+
+            private readonly bool _isContiguous;
+
+            private readonly TUnderlying _maxDefined;
+
+            private readonly TUnderlying _minDefined;
+
+            internal readonly Dictionary<TUnderlying, EnumMemberInternal> _valueMap;
+
+            internal readonly List<EnumMemberInternal> _duplicateValues; // is null when there are no duplicate values
+
+            private Dictionary<int, List<EnumMemberInternal>> _nameMap;
+
+            private Dictionary<int, List<EnumMemberInternal>> NameMap
+            {
+                get
+                {
+                    Dictionary<int, List<EnumMemberInternal>> nameMap = _nameMap;
+                    if (nameMap == null)
+                    {
+                        nameMap = new Dictionary<int, List<EnumMemberInternal>>(Count);
+                        foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in _valueMap)
+                        {
+                            int hash = CompareInfo.GetIgnoreCaseHash(pair.Value.Name);
+                            if (!nameMap.TryGetValue(hash, out List<EnumMemberInternal> list))
+                            {
+                                list = new List<EnumMemberInternal>();
+                                nameMap.Add(hash, list);
+                            }
+                            list.Add(pair.Value);
+                        }
+                        if (_duplicateValues != null)
+                        {
+                            foreach (EnumMemberInternal duplicateValue in _duplicateValues)
+                            {
+                                int hash = CompareInfo.GetIgnoreCaseHash(duplicateValue.Name);
+                                if (!nameMap.TryGetValue(hash, out List<EnumMemberInternal> list))
+                                {
+                                    list = new List<EnumMemberInternal>();
+                                    nameMap.Add(hash, list);
+                                }
+                                list.Add(duplicateValue);
+                            }
+                        }
+                        _nameMap = nameMap;
+                    }
+                    return nameMap;
+                }
+            }
+
+            public int Count => _valueMap.Count + (_duplicateValues?.Count ?? 0);
+
+            public EnumCache(Type enumType)
+            {
+                _isFlagEnum = enumType.IsDefined(typeof(FlagsAttribute), false);
+
+                FieldInfo[] fields = enumType.GetFields(BindingFlags.Public | BindingFlags.Static);
+                _valueMap = new Dictionary<TUnderlying, EnumMemberInternal>(fields.Length);
+                if (fields.Length == 0)
+                {
+                    return;
+                }
+                List<EnumMemberInternal> duplicateValues = new List<EnumMemberInternal>();
+
+                foreach (FieldInfo field in fields)
+                {
+                    string name = field.Name;
+                    TUnderlying value = (TUnderlying)field.GetValue(null);
+                    EnumMemberInternal member = new EnumMemberInternal(value, name);
+                    if (_valueMap.TryGetValue(value, out EnumMemberInternal existing))
+                    {
+                        if (field.GetCustomAttribute<PrimaryAttribute>(false) != null)
+                        {
+                            _valueMap[value] = member;
+                            member = existing;
+                        }
+                        duplicateValues.Add(member);
+                    }
+                    else
+                    {
+                        _valueMap.Add(value, member);
+                        // Is Power of Two
+                        if (s_operators.And(value, s_operators.Subtract(value, s_operators.One)).Equals(s_operators.Zero))
+                        {
+                            _allFlags = s_operators.Or(_allFlags, value);
+                        }
+                    }
+                }
+
+                bool isInOrder = true;
+                EnumMemberInternal previous = default;
+                bool isFirst = true;
+                foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in _valueMap)
+                {
+                    EnumMemberInternal current = pair.Value;
+                    if (isFirst)
+                    {
+                        _minDefined = current.Value;
+                        isFirst = false;
+                    }
+                    else if (previous.CompareTo(current) > 0)
+                    {
+                        isInOrder = false;
+                        break;
+                    }
+                    previous = current;
+                }
+                if (isInOrder)
+                {
+                    _maxDefined = previous.Value;
+                }
+                else
+                {
+                    // Makes sure is in increasing value order, due to no removals
+                    List<KeyValuePair<TUnderlying, EnumMemberInternal>> values = new List<KeyValuePair<TUnderlying, EnumMemberInternal>>(_valueMap);
+                    values.Sort((first, second) => first.Value.CompareTo(second.Value));
+                    _valueMap = new Dictionary<TUnderlying, EnumMemberInternal>(_valueMap.Count);
+
+                    foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in values)
+                    {
+                        _valueMap.Add(pair.Key, pair.Value);
+                    }
+
+                    _maxDefined = values[values.Count - 1].Key;
+                    _minDefined = values[0].Key;
+                }
+
+                _isContiguous = s_operators.Subtract(_maxDefined, s_operators.ToObject(_valueMap.Count - 1)).Equals(_minDefined);
+
+                if (duplicateValues.Count > 0)
+                {
+                    duplicateValues.Capacity = duplicateValues.Count;
+                    // Makes sure is in increasing value order
+                    duplicateValues.Sort();
+                    _duplicateValues = duplicateValues;
+                }
+            }
+
+            public IEnumerable<string> GetNames()
+            {
+                int dupeIndex = 0;
+                EnumMemberInternal nextDupeMember = _duplicateValues != null ? _duplicateValues[dupeIndex] : default;
+                foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in _valueMap)
+                {
+                    yield return pair.Value.Name;
+                    while (dupeIndex < _duplicateValues?.Count && nextDupeMember.CompareTo(pair.Value) == 0)
+                    {
+                        yield return nextDupeMember.Name;
+                        ++dupeIndex;
+                        if (dupeIndex < _duplicateValues.Count)
+                        {
+                            nextDupeMember = _duplicateValues[dupeIndex];
+                        }
+                    }
+                }
+            }
+
+            public TUnderlying ToObject(object value)
+            {
+                if (value == null)
+                {
+                    throw new ArgumentNullException(nameof(value));
+                }
+
+                TypeCode typeCode = Convert.GetTypeCode(value);
+
+                switch (typeCode)
+                {
+                    case TypeCode.SByte:
+                        return ToObject((sbyte)value);
+                    case TypeCode.Byte:
+                        return ToObject((byte)value);
+                    case TypeCode.Int16:
+                        return ToObject((short)value);
+                    case TypeCode.UInt16:
+                        return ToObject((ushort)value);
+                    case TypeCode.Int32:
+                        return ToObject((int)value);
+                    case TypeCode.UInt32:
+                        return ToObject((uint)value);
+                    case TypeCode.Int64:
+                        return ToObject((long)value);
+                    case TypeCode.UInt64:
+                        return ToObject((ulong)value);
+                    case TypeCode.Boolean:
+                        return ToObject(Convert.ToByte((bool)value));
+                    case TypeCode.Char:
+                        return ToObject((char)value);
+                    default:
+                        throw new ArgumentException(SR.Arg_MustBeEnumBaseTypeOrEnum, nameof(value));
+                }
+            }
+
+            public TUnderlying ToObject(long value) => s_operators.ToObject(value);
+
+            public TUnderlying ToObject(ulong value) => s_operators.ToObject(value);
+
+            public string GetName(TUnderlying value) => _valueMap.TryGetValue(value, out EnumMemberInternal member) ? member.Name : null;
+
+            public bool IsDefined(TUnderlying value) => _isContiguous ? !(s_operators.LessThan(value, _minDefined) || s_operators.LessThan(_maxDefined, value)) : _valueMap.ContainsKey(value);
+
+            public string ToString(TUnderlying value)
+            {
+                if (_isFlagEnum)
+                {
+                    return ToStringFlags(value);
+                }
+
+                if (_valueMap.TryGetValue(value, out EnumMemberInternal member))
+                {
+                    return member.Name;
+                }
+                return value.ToString();
+            }
+
+            public string ToString(TUnderlying value, string format)
+            {
+                char formatCh;
+                if (format == null || format.Length == 0)
+                {
+                    formatCh = 'G';
+                }
+                else if (format.Length != 1)
+                {
+                    throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
+                }
+                else
+                {
+                    formatCh = format[0];
+                }
+
+                switch (formatCh)
+                {
+                    case 'G':
+                    case 'g':
+                        return ToString(value);
+                    case 'D':
+                    case 'd':
+                        return value.ToString();
+                    case 'X':
+                    case 'x':
+                        return s_operators.ToHexString(value);
+                    case 'F':
+                    case 'f':
+                        return ToStringFlags(value);
+                    default:
+                        throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
+                }
+            }
+
+            private string ToStringFlags(TUnderlying value)
+            {
+                StringBuilder sb = StringBuilderCache.Acquire();
+
+                List<EnumMemberInternal> members = new List<EnumMemberInternal>(_valueMap.Values); // Could use an OrderedDictionary to remove allocation
+                int index = members.Count - 1;
+                bool firstTime = true;
+                TUnderlying result = value;
+
+                // We will not optimize this code further to keep it maintainable. There are some boundary checks that can be applied
+                // to minimize the comparsions required. This code works the same for the best/worst case. In general the number of
+                // items in an enum are sufficiently small and not worth the optimization.
+                while (index >= 0)
+                {
+                    value = members[index].Value;
+                    if ((index == 0) && (value.Equals(s_operators.Zero)))
+                    {
+                        break;
+                    }
+
+                    if (s_operators.And(result, value).Equals(value))
+                    {
+                        result = s_operators.Subtract(result, value);
+                        if (!firstTime)
+                        {
+                            sb.Insert(0, enumSeparatorString);
+                        }
+
+                        sb.Insert(0, members[index].Name);
+                        firstTime = false;
+                    }
+
+                    index--;
+                }
+
+                string returnString;
+                if (!result.Equals(s_operators.Zero))
+                {
+                    // We were unable to represent this number as a bitwise or of valid flags
+                    returnString = value.ToString();
+                }
+                else if (value.Equals(s_operators.Zero))
+                {
+                    // For the cases when we have zero
+                    if (members.Count > 0 && members[0].Value.Equals(s_operators.Zero))
+                    {
+                        returnString = members[0].Name; // Zero was one of the enum values.
+                    }
+                    else
+                    {
+                        returnString = "0";
+                    }
+                }
+                else
+                {
+                    returnString = sb.ToString(); // Return the string representation
+                }
+
+                StringBuilderCache.Release(sb);
+                return returnString;
+            }
+
+            public string Format(TUnderlying value, string format)
+            {
+                if (format == null)
+                {
+                    throw new ArgumentNullException(nameof(format));
+                }
+                if (format.Length != 1)
+                {
+                    throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
+                }
+
+                return ToString(value, format);
+            }
+
+            public TUnderlying Parse(ReadOnlySpan<char> value, bool ignoreCase)
+            {
+                value = value.Trim();
+
+                if (value.Length == 0)
+                {
+                    throw new ArgumentException(SR.Arg_MustContainEnumInfo);
+                }
+                if (TryParseInternal(value, ignoreCase, out TUnderlying result, out bool isNumeric))
+                {
+                    return result;
+                }
+                if (isNumeric)
+                {
+                    throw new OverflowException(s_operators.OverflowMessage);
+                }
+                throw new ArgumentException(SR.Arg_EnumValueNotFound, nameof(value));
+            }
+
+            public bool TryParse(ReadOnlySpan<char> value, bool ignoreCase, out TUnderlying result) => TryParseInternal(value.Trim(), ignoreCase, out result, out _);
+
+            private bool TryParseInternal(ReadOnlySpan<char> value, bool ignoreCase, out TUnderlying result, out bool isNumeric)
+            {
+                isNumeric = false;
+                result = default;
+                if (value.Length > 0)
+                {
+                    char firstNonWhitespaceChar = value[0];
+                    if ((char.IsDigit(firstNonWhitespaceChar) || firstNonWhitespaceChar == '-' || firstNonWhitespaceChar == '+'))
+                    {
+                        isNumeric = true;
+                        if (s_operators.TryParse(value, out result))
+                        {
+                            return true;
+                        }
+                    }
+
+                    ReadOnlySpan<char> span = value;
+                    
+                    while (span.Length > 0)
+                    {
+                        // Find the next separator, if there is one, otherwise the end of the string.
+                        int endIndex = span.IndexOf(enumSeparatorChar);
+                        if (endIndex == -1)
+                        {
+                            endIndex = span.Length;
+                        }
+
+                        ReadOnlySpan<char> slice = span.Slice(0, endIndex).Trim();
+
+                        EnumMemberInternal foundMember = default;
+                        if (NameMap.TryGetValue(CompareInfo.GetIgnoreCaseHash(slice), out List<EnumMemberInternal> list))
+                        {
+                            foreach (EnumMemberInternal member in list)
+                            {
+                                if (slice.Equals(member.Name.AsSpan(), StringComparison.Ordinal))
+                                {
+                                    foundMember = member;
+                                    break;
+                                }
+                            }
+
+                            if (foundMember.Name == null && ignoreCase)
+                            {
+                                foreach (EnumMemberInternal member in list)
+                                {
+                                    if (slice.Equals(member.Name.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        foundMember = member;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (foundMember.Name == null)
+                        {
+                            return false;
+                        }
+                        else
+                        {
+                            result = s_operators.Or(result, foundMember.Value);
+                            span = span.Slice(endIndex == span.Length ? endIndex + 1: span.Length);
+                        }
+                    }
+
+                    return true;
+                }
+
+                return false;
+            }
+
+            public struct EnumMemberInternal : IComparable<EnumMemberInternal>
+            {
+                public TUnderlying Value;
+                public string Name;
+
+                public EnumMemberInternal(TUnderlying value, string name)
+                {
+                    Value = value;
+                    Name = name;
+                }
+
+                public int CompareTo(EnumMemberInternal other) => s_operators.ToUInt64(Value).CompareTo(s_operators.ToUInt64(other.Value));
+            }
+        }
+
+        #region UnderlyingOperators
+        private interface IUnderlyingOperators<TUnderlying>
+            where TUnderlying : struct, IComparable<TUnderlying>, IEquatable<TUnderlying>, IConvertible
+        {
+            TUnderlying One { get; }
+            TUnderlying Zero { get; }
+            string OverflowMessage { get; }
+            TUnderlying And(TUnderlying left, TUnderlying right);
+            TUnderlying LeftShift(TUnderlying value, int amount);
+            bool LessThan(TUnderlying left, TUnderlying right);
+            TUnderlying Not(TUnderlying value);
+            TUnderlying Or(TUnderlying left, TUnderlying right);
+            TUnderlying Subtract(TUnderlying left, TUnderlying right);
+            string ToHexString(TUnderlying value);
+            TUnderlying ToObject(long value);
+            TUnderlying ToObject(ulong value);
+            ulong ToUInt64(TUnderlying value);
+            bool TryParse(ReadOnlySpan<char> span, out TUnderlying result);
+        }
+
+        private struct ByteOperators : IUnderlyingOperators<byte>
+        {
+            public byte One => 1;
+
+            public byte Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_Byte;
+
+            public byte And(byte left, byte right) => (byte)(left & right);
+
+            public byte LeftShift(byte value, int amount) => (byte)(value << amount);
+
+            public bool LessThan(byte left, byte right) => left < right;
+
+            public byte Not(byte value) => (byte)~value;
+
+            public byte Or(byte left, byte right) => (byte)(left | right);
+
+            public byte Subtract(byte left, byte right) => (byte)(left - right);
+
+            public string ToHexString(byte value) => value.ToString("X2");
+
+            public byte ToObject(long value) => (byte)value;
+
+            public byte ToObject(ulong value) => (byte)value;
+
+            public ulong ToUInt64(byte value) => value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out byte result) => byte.TryParse(span, out result);
+        }
+
+        private struct SByteOperators : IUnderlyingOperators<sbyte>
+        {
+            public sbyte One => 1;
+
+            public sbyte Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_SByte;
+
+            public sbyte And(sbyte left, sbyte right) => (sbyte)(left & right);
+
+            public sbyte LeftShift(sbyte value, int amount) => (sbyte)(value << amount);
+
+            public bool LessThan(sbyte left, sbyte right) => left < right;
+
+            public sbyte Not(sbyte value) => (sbyte)~value;
+
+            public sbyte Or(sbyte left, sbyte right) => (sbyte)(left | right);
+
+            public sbyte Subtract(sbyte left, sbyte right) => (sbyte)(left - right);
+
+            public string ToHexString(sbyte value) => value.ToString("X2");
+
+            public sbyte ToObject(long value) => (sbyte)value;
+
+            public sbyte ToObject(ulong value) => (sbyte)value;
+
+            public ulong ToUInt64(sbyte value) => (ulong)value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out sbyte result) => sbyte.TryParse(span, out result);
+        }
+
+        private struct Int16Operators : IUnderlyingOperators<short>
+        {
+            public short One => 1;
+
+            public short Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_Int16;
+
+            public short And(short left, short right) => (short)(left & right);
+
+            public short LeftShift(short value, int amount) => (short)(value << amount);
+
+            public bool LessThan(short left, short right) => left < right;
+
+            public short Not(short value) => (short)~value;
+
+            public short Or(short left, short right) => (short)(left | right);
+
+            public short Subtract(short left, short right) => (short)(left - right);
+
+            public string ToHexString(short value) => value.ToString("X4");
+
+            public short ToObject(long value) => (short)value;
+
+            public short ToObject(ulong value) => (short)value;
+
+            public ulong ToUInt64(short value) => (ulong)value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out short result) => short.TryParse(span, out result);
+        }
+
+        private struct UInt16Operators : IUnderlyingOperators<ushort>
+        {
+            public ushort One => 1;
+
+            public ushort Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_UInt16;
+
+            public ushort And(ushort left, ushort right) => (ushort)(left & right);
+
+            public ushort LeftShift(ushort value, int amount) => (ushort)(value << amount);
+
+            public bool LessThan(ushort left, ushort right) => left < right;
+
+            public ushort Not(ushort value) => (ushort)~value;
+
+            public ushort Or(ushort left, ushort right) => (ushort)(left | right);
+
+            public ushort Subtract(ushort left, ushort right) => (ushort)(left - right);
+
+            public string ToHexString(ushort value) => value.ToString("X4");
+
+            public ushort ToObject(long value) => (ushort)value;
+
+            public ushort ToObject(ulong value) => (ushort)value;
+
+            public ulong ToUInt64(ushort value) => value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out ushort result) => ushort.TryParse(span, out result);
+        }
+
+        private struct Int32Operators : IUnderlyingOperators<int>
+        {
+            public int One => 1;
+
+            public int Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_Int32;
+
+            public int And(int left, int right) => left & right;
+
+            public int LeftShift(int value, int amount) => value << amount;
+
+            public bool LessThan(int left, int right) => left < right;
+
+            public int Not(int value) => ~value;
+
+            public int Or(int left, int right) => left | right;
+
+            public int Subtract(int left, int right) => left - right;
+
+            public string ToHexString(int value) => value.ToString("X8");
+
+            public int ToObject(long value) => (int)value;
+
+            public int ToObject(ulong value) => (int)value;
+
+            public ulong ToUInt64(int value) => (ulong)value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out int result) => int.TryParse(span, out result);
+        }
+
+        private struct UInt32Operators : IUnderlyingOperators<uint>
+        {
+            public uint One => 1;
+
+            public uint Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_UInt32;
+
+            public uint And(uint left, uint right) => left & right;
+
+            public uint LeftShift(uint value, int amount) => value << amount;
+
+            public bool LessThan(uint left, uint right) => left < right;
+
+            public uint Not(uint value) => ~value;
+
+            public uint Or(uint left, uint right) => left | right;
+
+            public uint Subtract(uint left, uint right) => left - right;
+
+            public string ToHexString(uint value) => value.ToString("X8");
+
+            public uint ToObject(long value) => (uint)value;
+
+            public uint ToObject(ulong value) => (uint)value;
+
+            public ulong ToUInt64(uint value) => value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out uint result) => uint.TryParse(span, out result);
+        }
+
+        private struct Int64Operators : IUnderlyingOperators<long>
+        {
+            public long One => 1;
+
+            public long Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_Int64;
+
+            public long And(long left, long right) => left & right;
+
+            public long LeftShift(long value, int amount) => value << amount;
+
+            public bool LessThan(long left, long right) => left < right;
+
+            public long Not(long value) => ~value;
+
+            public long Or(long left, long right) => left | right;
+
+            public long Subtract(long left, long right) => left - right;
+
+            public string ToHexString(long value) => value.ToString("X16");
+
+            public long ToObject(long value) => value;
+
+            public long ToObject(ulong value) => (long)value;
+
+            public ulong ToUInt64(long value) => (ulong)value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out long result) => long.TryParse(span, out result);
+        }
+
+        private struct UInt64Operators : IUnderlyingOperators<ulong>
+        {
+            public ulong One => 1;
+
+            public ulong Zero => 0;
+
+            public string OverflowMessage => SR.Overflow_UInt64;
+
+            public ulong And(ulong left, ulong right) => left & right;
+
+            public ulong LeftShift(ulong value, int amount) => value << amount;
+
+            public bool LessThan(ulong left, ulong right) => left < right;
+
+            public ulong Not(ulong value) => ~value;
+
+            public ulong Or(ulong left, ulong right) => left | right;
+
+            public ulong Subtract(ulong left, ulong right) => left - right;
+
+            public string ToHexString(ulong value) => value.ToString("X16");
+
+            public ulong ToObject(long value) => (ulong)value;
+
+            public ulong ToObject(ulong value) => value;
+
+            public ulong ToUInt64(ulong value) => value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out ulong result) => ulong.TryParse(span, out result);
+        }
+
+        private struct BooleanOperators : IUnderlyingOperators<bool>
+        {
+            public bool One => true;
+
+            public bool Zero => false;
+
+            public string OverflowMessage => null;
+
+            public bool And(bool left, bool right) => left & right;
+
+            public bool LeftShift(bool value, int amount) => !value;
+
+            public bool LessThan(bool left, bool right) => !left & right;
+
+            public bool Not(bool value) => !value;
+
+            public bool Or(bool left, bool right) => left | right;
+
+            public bool Subtract(bool left, bool right) => left ^ right;
+
+            public string ToHexString(bool value) => Convert.ToByte(value).ToString("X2");
+
+            public bool ToObject(long value) => value != 0L;
+
+            public bool ToObject(ulong value) => value != 0UL;
+
+            public ulong ToUInt64(bool value) => Convert.ToUInt64(value);
+
+            public bool TryParse(ReadOnlySpan<char> span, out bool result) => bool.TryParse(span, out result);
+        }
+
+        private struct CharOperators : IUnderlyingOperators<char>
+        {
+            public char One => (char)1;
+
+            public char Zero => (char)0;
+
+            public string OverflowMessage => SR.Overflow_Char;
+
+            public char And(char left, char right) => (char)(left & right);
+
+            public char LeftShift(char value, int amount) => (char)(value << amount);
+
+            public bool LessThan(char left, char right) => left < right;
+
+            public char Not(char value) => (char)~value;
+
+            public char Or(char left, char right) => (char)(left | right);
+
+            public char Subtract(char left, char right) => (char)(left - right);
+
+            public string ToHexString(char value) => ((ushort)value).ToString("X4");
+
+            public char ToObject(long value) => (char)value;
+
+            public char ToObject(ulong value) => (char)value;
+
+            public ulong ToUInt64(char value) => value;
+
+            public bool TryParse(ReadOnlySpan<char> span, out char result)
+            {
+                bool success = span.Length == 1;
+                result = success ? span[0] : default;
+                return success;
+            }
+        }
+        #endregion
         #endregion
 
         #region Private Methods
-        internal unsafe object GetValue()
-        {
-            fixed (void* pValue = &JitHelpers.GetPinningHelper(this).m_data)
-            {
-                switch (InternalGetCorElementType())
-                {
-                    case CorElementType.I1:
-                        return *(sbyte*)pValue;
-                    case CorElementType.U1:
-                        return *(byte*)pValue;
-                    case CorElementType.Boolean:
-                        return *(bool*)pValue;
-                    case CorElementType.I2:
-                        return *(short*)pValue;
-                    case CorElementType.U2:
-                        return *(ushort*)pValue;
-                    case CorElementType.Char:
-                        return *(char*)pValue;
-                    case CorElementType.I4:
-                        return *(int*)pValue;
-                    case CorElementType.U4:
-                        return *(uint*)pValue;
-                    case CorElementType.R4:
-                        return *(float*)pValue;
-                    case CorElementType.I8:
-                        return *(long*)pValue;
-                    case CorElementType.U8:
-                        return *(ulong*)pValue;
-                    case CorElementType.R8:
-                        return *(double*)pValue;
-                    case CorElementType.I:
-                        return *(IntPtr*)pValue;
-                    case CorElementType.U:
-                        return *(UIntPtr*)pValue;
-                    default:
-                        Debug.Fail("Invalid primitive type");
-                        return null;
-                }
-            }
-        }
+        internal object GetUnderlyingValue() => Bridge.GetUnderlyingValue(this);
 
-        private unsafe ulong ToUInt64()
-        {
-            fixed (void* pValue = &JitHelpers.GetPinningHelper(this).m_data)
-            {
-                switch (InternalGetCorElementType())
-                {
-                    case CorElementType.I1:
-                        return (ulong)*(sbyte*)pValue;
-                    case CorElementType.U1:
-                        return *(byte*)pValue;
-                    case CorElementType.Boolean:
-                        return Convert.ToUInt64(*(bool*)pValue, CultureInfo.InvariantCulture);
-                    case CorElementType.I2:
-                        return (ulong)*(short*)pValue;
-                    case CorElementType.U2:
-                    case CorElementType.Char:
-                        return *(ushort*)pValue;
-                    case CorElementType.I4:
-                        return (ulong)*(int*)pValue;
-                    case CorElementType.U4:
-                    case CorElementType.R4:
-                        return *(uint*)pValue;
-                    case CorElementType.I8:
-                        return (ulong)*(long*)pValue;
-                    case CorElementType.U8:
-                    case CorElementType.R8:
-                        return *(ulong*)pValue;
-                    case CorElementType.I:
-                        if (IntPtr.Size == 8)
-                        {
-                            return *(ulong*)pValue;
-                        }
-                        else
-                        {
-                            return (ulong)*(int*)pValue;
-                        }
-                    case CorElementType.U:
-                        if (IntPtr.Size == 8)
-                        {
-                            return *(ulong*)pValue;
-                        }
-                        else
-                        {
-                            return *(uint*)pValue;
-                        }
-                    default:
-                        Debug.Fail("Invalid primitive type");
-                        return 0;
-                }
-            }
-        }
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        private extern bool InternalHasFlag(Enum flags);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        private extern CorElementType InternalGetCorElementType();
-
+        private IEnumBridge Bridge => GetBridge((RuntimeType)GetType());
         #endregion
 
         #region Object Overrides
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        public extern override bool Equals(object obj);
+        public override bool Equals(object obj) => Bridge.Equals(this, obj);
 
-        public override unsafe int GetHashCode()
-        {
-            // CONTRACT with the runtime: GetHashCode of enum types is implemented as GetHashCode of the underlying type.
-            // The runtime can bypass calls to Enum::GetHashCode and call the underlying type's GetHashCode directly
-            // to avoid boxing the enum.
+        public static bool Equals<TEnum>(TEnum value, TEnum other) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.Equals(value, other);
 
-            fixed (void* pValue = &JitHelpers.GetPinningHelper(this).m_data)
-            {
-                switch (InternalGetCorElementType())
-                {
-                    case CorElementType.I1:
-                        return (*(sbyte*)pValue).GetHashCode();
-                    case CorElementType.U1:
-                        return (*(byte*)pValue).GetHashCode();
-                    case CorElementType.Boolean:
-                        return (*(bool*)pValue).GetHashCode();
-                    case CorElementType.I2:
-                        return (*(short*)pValue).GetHashCode();
-                    case CorElementType.U2:
-                        return (*(ushort*)pValue).GetHashCode();
-                    case CorElementType.Char:
-                        return (*(char*)pValue).GetHashCode();
-                    case CorElementType.I4:
-                        return (*(int*)pValue).GetHashCode();
-                    case CorElementType.U4:
-                        return (*(uint*)pValue).GetHashCode();
-                    case CorElementType.R4:
-                        return (*(float*)pValue).GetHashCode();
-                    case CorElementType.I8:
-                        return (*(long*)pValue).GetHashCode();
-                    case CorElementType.U8:
-                        return (*(ulong*)pValue).GetHashCode();
-                    case CorElementType.R8:
-                        return (*(double*)pValue).GetHashCode();
-                    case CorElementType.I:
-                        return (*(IntPtr*)pValue).GetHashCode();
-                    case CorElementType.U:
-                        return (*(UIntPtr*)pValue).GetHashCode();
-                    default:
-                        Debug.Fail("Invalid primitive type");
-                        return 0;
-                }
-            }
-        }
+        public override int GetHashCode() => Bridge.GetHashCode(this);
 
-        public override string ToString()
-        {
-            // Returns the value in a human readable format.  For PASCAL style enums who's value maps directly the name of the field is returned.
-            // For PASCAL style enums who's values do not map directly the decimal value of the field is returned.
-            // For BitFlags (indicated by the Flags custom attribute): If for each bit that is set in the value there is a corresponding constant
-            //(a pure power of 2), then the  OR string (ie "Red | Yellow") is returned. Otherwise, if the value is zero or if you can't create a string that consists of
-            // pure powers of 2 OR-ed together, you return a hex value
+        public override string ToString() => Bridge.ToString(this);
 
-
-            // Try to see if its one of the enum values, then we return a String back else the value
-            return Enum.InternalFormat((RuntimeType)GetType(), ToUInt64()) ?? GetValue().ToString();
-        }
+        public static string ToString<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToString(value);
         #endregion
 
         #region IFormattable
         [Obsolete("The provider argument is not used. Please use ToString(String).")]
-        public string ToString(string format, IFormatProvider provider)
-        {
-            return ToString(format);
-        }
+        public string ToString(string format, IFormatProvider provider) => ToString(format);
         #endregion
 
         #region IComparable
-        public int CompareTo(object target)
-        {
-            const int retIncompatibleMethodTables = 2;  // indicates that the method tables did not match
-            const int retInvalidEnumType = 3; // indicates that the enum was of an unknown/unsupported underlying type
+        public int CompareTo(object target) => Bridge.CompareTo(this, target);
 
-            if (this == null)
-                throw new NullReferenceException();
-
-            int ret = InternalCompareTo(this, target);
-
-            if (ret < retIncompatibleMethodTables)
-            {
-                // -1, 0 and 1 are the normal return codes
-                return ret;
-            }
-            else if (ret == retIncompatibleMethodTables)
-            {
-                Type thisType = this.GetType();
-                Type targetType = target.GetType();
-
-                throw new ArgumentException(SR.Format(SR.Arg_EnumAndObjectMustBeSameType, targetType.ToString(), thisType.ToString()));
-            }
-            else
-            {
-                // assert valid return code (3)
-                Debug.Assert(ret == retInvalidEnumType, "Enum.InternalCompareTo return code was invalid");
-
-                throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
-            }
-        }
+        public static int CompareTo<TEnum>(TEnum value, TEnum other) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.CompareTo(value, other);
         #endregion
 
         #region Public Methods
-        public string ToString(string format)
-        {
-            char formatCh;
-            if (format == null || format.Length == 0)
-                formatCh = 'G';
-            else if (format.Length != 1)
-                throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
-            else
-                formatCh = format[0];
+        public string ToString(string format) => Bridge.ToString(this, format);
 
-            if (formatCh == 'G' || formatCh == 'g')
-                return ToString();
-
-            if (formatCh == 'D' || formatCh == 'd')
-                return GetValue().ToString();
-
-            if (formatCh == 'X' || formatCh == 'x')
-                return InternalFormattedHexString();
-
-            if (formatCh == 'F' || formatCh == 'f')
-                return InternalFlagsFormat((RuntimeType)GetType(), ToUInt64()) ?? GetValue().ToString();
-
-            throw new FormatException(SR.Format_InvalidEnumFormatSpecification);
-        }
+        public static string ToString<TEnum>(TEnum value, string format) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToString(value, format);
 
         [Obsolete("The provider argument is not used. Please use ToString().")]
-        public string ToString(IFormatProvider provider)
-        {
-            return ToString();
-        }
+        public string ToString(IFormatProvider provider) => ToString();
 
         [Intrinsic]
-        public bool HasFlag(Enum flag)
-        {
-            if (flag == null)
-                throw new ArgumentNullException(nameof(flag));
-
-            if (!this.GetType().IsEquivalentTo(flag.GetType()))
-            {
-                throw new ArgumentException(SR.Format(SR.Argument_EnumTypeDoesNotMatch, flag.GetType(), this.GetType()));
-            }
-
-            return InternalHasFlag(flag);
-        }
-
+        [Obsolete("Please use FlagEnum.HasAllFlags or FlagEnum.HasAnyFlags instead.")]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool HasFlag(Enum flag) => Bridge.HasAllFlags(this, flag);
         #endregion
 
         #region IConvertable
-        public TypeCode GetTypeCode()
-        {
-            switch (InternalGetCorElementType())
-            {
-                case CorElementType.I1:
-                    return TypeCode.SByte;
-                case CorElementType.U1:
-                    return TypeCode.Byte;
-                case CorElementType.Boolean:
-                    return TypeCode.Boolean;
-                case CorElementType.I2:
-                    return TypeCode.Int16;
-                case CorElementType.U2:
-                    return TypeCode.UInt16;
-                case CorElementType.Char:
-                    return TypeCode.Char;
-                case CorElementType.I4:
-                    return TypeCode.Int32;
-                case CorElementType.U4:
-                    return TypeCode.UInt32;
-                case CorElementType.I8:
-                    return TypeCode.Int64;
-                case CorElementType.U8:
-                    return TypeCode.UInt64;
-                default:
-                    throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
-            }
-        }
+        public TypeCode GetTypeCode() => Bridge.TypeCode;
 
-        bool IConvertible.ToBoolean(IFormatProvider provider)
-        {
-            return Convert.ToBoolean(GetValue(), CultureInfo.CurrentCulture);
-        }
+        bool IConvertible.ToBoolean(IFormatProvider provider) => Bridge.ToBoolean(this);
 
-        char IConvertible.ToChar(IFormatProvider provider)
-        {
-            return Convert.ToChar(GetValue(), CultureInfo.CurrentCulture);
-        }
+        char IConvertible.ToChar(IFormatProvider provider) => Bridge.ToChar(this);
 
-        sbyte IConvertible.ToSByte(IFormatProvider provider)
-        {
-            return Convert.ToSByte(GetValue(), CultureInfo.CurrentCulture);
-        }
+        sbyte IConvertible.ToSByte(IFormatProvider provider) => Bridge.ToSByte(this);
 
-        byte IConvertible.ToByte(IFormatProvider provider)
-        {
-            return Convert.ToByte(GetValue(), CultureInfo.CurrentCulture);
-        }
+        [CLSCompliant(false)]
+        public static sbyte ToSByte<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToSByte(value);
 
-        short IConvertible.ToInt16(IFormatProvider provider)
-        {
-            return Convert.ToInt16(GetValue(), CultureInfo.CurrentCulture);
-        }
+        byte IConvertible.ToByte(IFormatProvider provider) => Bridge.ToByte(this);
+        
+        public static byte ToByte<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToByte(value);
 
-        ushort IConvertible.ToUInt16(IFormatProvider provider)
-        {
-            return Convert.ToUInt16(GetValue(), CultureInfo.CurrentCulture);
-        }
+        short IConvertible.ToInt16(IFormatProvider provider) => Bridge.ToInt16(this);
+        
+        public static short ToInt16<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToInt16(value);
 
-        int IConvertible.ToInt32(IFormatProvider provider)
-        {
-            return Convert.ToInt32(GetValue(), CultureInfo.CurrentCulture);
-        }
+        ushort IConvertible.ToUInt16(IFormatProvider provider) => Bridge.ToUInt16(this);
 
-        uint IConvertible.ToUInt32(IFormatProvider provider)
-        {
-            return Convert.ToUInt32(GetValue(), CultureInfo.CurrentCulture);
-        }
+        [CLSCompliant(false)]
+        public static ushort ToUInt16<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToUInt16(value);
 
-        long IConvertible.ToInt64(IFormatProvider provider)
-        {
-            return Convert.ToInt64(GetValue(), CultureInfo.CurrentCulture);
-        }
+        int IConvertible.ToInt32(IFormatProvider provider) => Bridge.ToInt32(this);
 
-        ulong IConvertible.ToUInt64(IFormatProvider provider)
-        {
-            return Convert.ToUInt64(GetValue(), CultureInfo.CurrentCulture);
-        }
+        public static int ToInt32<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToInt32(value);
 
-        float IConvertible.ToSingle(IFormatProvider provider)
-        {
-            return Convert.ToSingle(GetValue(), CultureInfo.CurrentCulture);
-        }
+        uint IConvertible.ToUInt32(IFormatProvider provider) => Bridge.ToUInt32(this);
 
-        double IConvertible.ToDouble(IFormatProvider provider)
-        {
-            return Convert.ToDouble(GetValue(), CultureInfo.CurrentCulture);
-        }
+        [CLSCompliant(false)]
+        public static uint ToUInt32<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToUInt32(value);
 
-        decimal IConvertible.ToDecimal(IFormatProvider provider)
-        {
-            return Convert.ToDecimal(GetValue(), CultureInfo.CurrentCulture);
-        }
+        long IConvertible.ToInt64(IFormatProvider provider) => Bridge.ToInt64(this);
 
-        DateTime IConvertible.ToDateTime(IFormatProvider provider)
-        {
-            throw new InvalidCastException(SR.Format(SR.InvalidCast_FromTo, "Enum", "DateTime"));
-        }
+        public static long ToInt64<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToInt64(value);
 
-        object IConvertible.ToType(Type type, IFormatProvider provider)
-        {
-            return Convert.DefaultToType((IConvertible)this, type, provider);
-        }
+        ulong IConvertible.ToUInt64(IFormatProvider provider) => Bridge.ToUInt64(this);
+
+        [CLSCompliant(false)]
+        public static ulong ToUInt64<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToUInt64(value);
+
+        float IConvertible.ToSingle(IFormatProvider provider) => Bridge.ToSingle(this);
+
+        double IConvertible.ToDouble(IFormatProvider provider) => Bridge.ToDouble(this);
+
+        decimal IConvertible.ToDecimal(IFormatProvider provider) => Bridge.ToDecimal(this);
+
+        DateTime IConvertible.ToDateTime(IFormatProvider provider) => throw new InvalidCastException(SR.Format(SR.InvalidCast_FromTo, "Enum", "DateTime"));
+
+        object IConvertible.ToType(Type type, IFormatProvider provider) => Convert.DefaultToType(this, type, provider);
         #endregion
 
         #region ToObject
         [CLSCompliant(false)]
-        public static object ToObject(Type enumType, sbyte value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
-
-        public static object ToObject(Type enumType, short value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
-
-        public static object ToObject(Type enumType, int value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
-
-        public static object ToObject(Type enumType, byte value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
+        public static object ToObject(Type enumType, sbyte value) => GetBridge(enumType).ToObject(value);
 
         [CLSCompliant(false)]
-        public static object ToObject(Type enumType, ushort value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
+        public static TEnum ToObject<TEnum>(sbyte value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+
+        public static object ToObject(Type enumType, short value) => GetBridge(enumType).ToObject(value);
+        
+        public static TEnum ToObject<TEnum>(short value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+
+        public static object ToObject(Type enumType, int value) => GetBridge(enumType).ToObject(value);
+        
+        public static TEnum ToObject<TEnum>(int value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+
+        public static object ToObject(Type enumType, byte value) => GetBridge(enumType).ToObject(value);
+        
+        public static TEnum ToObject<TEnum>(byte value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
 
         [CLSCompliant(false)]
-        public static object ToObject(Type enumType, uint value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
-
-        public static object ToObject(Type enumType, long value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
+        public static object ToObject(Type enumType, ushort value) => GetBridge(enumType).ToObject(value);
 
         [CLSCompliant(false)]
-        public static object ToObject(Type enumType, ulong value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, unchecked((long)value));
-        }
+        public static TEnum ToObject<TEnum>(ushort value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
 
-        private static object ToObject(Type enumType, char value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value);
-        }
+        [CLSCompliant(false)]
+        public static object ToObject(Type enumType, uint value) => GetBridge(enumType).ToObject(value);
 
-        private static object ToObject(Type enumType, bool value)
-        {
-            if (enumType == null)
-                throw new ArgumentNullException(nameof(enumType));
-            if (!enumType.IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, nameof(enumType));
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
-                throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
-            return InternalBoxEnum(rtType, value ? 1 : 0);
-        }
+        [CLSCompliant(false)]
+        public static TEnum ToObject<TEnum>(uint value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+
+        public static object ToObject(Type enumType, long value) => GetBridge(enumType).ToObject(value);
+        
+        public static TEnum ToObject<TEnum>(long value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+
+        [CLSCompliant(false)]
+        public static object ToObject(Type enumType, ulong value) => GetBridge(enumType).ToObject(value);
+
+        [CLSCompliant(false)]
+        public static TEnum ToObject<TEnum>(ulong value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
         #endregion
     }
 }

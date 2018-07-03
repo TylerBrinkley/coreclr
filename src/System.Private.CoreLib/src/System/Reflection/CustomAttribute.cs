@@ -810,7 +810,7 @@ namespace System.Reflection
 
             if (value.GetType().IsEnum)
             {
-                return ((Enum)value).GetValue();
+                return ((Enum)value).GetUnderlyingValue();
             }
             return value;
         }

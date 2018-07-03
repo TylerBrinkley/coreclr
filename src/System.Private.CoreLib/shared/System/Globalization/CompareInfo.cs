@@ -1269,6 +1269,11 @@ namespace System.Globalization
         {
             Debug.Assert(source != null, "source must not be null");
 
+            return GetIgnoreCaseHash(source.AsSpan());
+        }
+
+        internal static unsafe int GetIgnoreCaseHash(ReadOnlySpan<char> source)
+        {
             // Do not allocate on the stack if string is empty
             if (source.Length == 0)
             {
@@ -1280,7 +1285,7 @@ namespace System.Globalization
                 stackalloc char[255] :
                 (borrowedArr = ArrayPool<char>.Shared.Rent(source.Length));
 
-            int charsWritten = source.AsSpan().ToUpperInvariant(span);
+            int charsWritten = source.ToUpperInvariant(span);
 
             // Slice the array to the size returned by ToUpperInvariant.
             int hash = Marvin.ComputeHash32(MemoryMarshal.AsBytes(span.Slice(0, charsWritten)), Marvin.DefaultSeed);

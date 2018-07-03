@@ -319,17 +319,7 @@ namespace System
         public virtual bool IsInstanceOfType(object o) => o == null ? false : IsAssignableFrom(o.GetType());
         public virtual bool IsEquivalentTo(Type other) => this == other;
 
-        public virtual Type GetEnumUnderlyingType()
-        {
-            if (!IsEnum)
-                throw new ArgumentException(SR.Arg_MustBeEnum, "enumType");
-
-            FieldInfo[] fields = GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (fields == null || fields.Length != 1)
-                throw new ArgumentException(SR.Argument_InvalidEnum, "enumType");
-
-            return fields[0].FieldType;
-        }
+        public virtual Type GetEnumUnderlyingType() => Enum.GetUnderlyingType(this);
         public virtual Array GetEnumValues()
         {
             if (!IsEnum)
