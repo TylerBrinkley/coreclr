@@ -285,6 +285,7 @@ namespace System
             bool Equals(TEnum value, TEnum other);
             string Format(TEnum value, string format);
             IEnumerable<TEnum> GetFlags(TEnum value);
+            int GetHashCode(TEnum value);
             string GetName(TEnum value);
             IEnumerable<TEnum> GetValues();
             bool HasAllFlags(TEnum value);
@@ -336,6 +337,8 @@ namespace System
             public int CompareTo(TEnum value, TEnum other) => ToUnderlying(value).CompareTo(ToUnderlying(other));
 
             public bool Equals(TEnum value, TEnum other) => ToUnderlying(value).Equals(ToUnderlying(other));
+
+            public int GetHashCode(TEnum value) => ToUnderlying(value).GetHashCode();
 
             public string Format(TEnum value, string format) => s_cache.Format(ToUnderlying(value), format);
 
@@ -1397,6 +1400,8 @@ namespace System
         public static bool Equals<TEnum>(TEnum value, TEnum other) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.Equals(value, other);
 
         public override int GetHashCode() => Bridge.GetHashCode(this);
+
+        internal static int GetHashCode<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.GetHashCode(value);
 
         public override string ToString() => Bridge.ToString(this);
 
