@@ -11,6 +11,7 @@ using Internal.Runtime.CompilerServices;
 using System.Collections.Generic;
 using shared.System.ComponentModel;
 using System.ComponentModel;
+using System.Diagnostics;
 
 // The code below includes partial support for float/double and
 // pointer sized enums.
@@ -261,7 +262,6 @@ namespace System
             short ToInt16(Enum value);
             int ToInt32(Enum value);
             long ToInt64(Enum value);
-            object ToObject(long value);
             object ToObject(object value);
             object ToObject(ulong value);
             sbyte ToSByte(Enum value);
@@ -300,7 +300,6 @@ namespace System
             short ToInt16(TEnum value);
             int ToInt32(TEnum value);
             long ToInt64(TEnum value);
-            TEnum ToObject(long value);
             TEnum ToObject(object value);
             TEnum ToObject(ulong value);
             sbyte ToSByte(TEnum value);
@@ -321,8 +320,10 @@ namespace System
 
             private static readonly EnumCache<TUnderlying, TUnderlyingOperators> s_cache = new EnumCache<TUnderlying, TUnderlyingOperators>(typeof(TEnum));
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             private static TUnderlying ToUnderlying(TEnum value) => Unsafe.As<TEnum, TUnderlying>(ref value);
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             private static TEnum ToEnum(TUnderlying value) => Unsafe.As<TUnderlying, TEnum>(ref value);
 
             public TEnum Parse(ReadOnlySpan<char> value, bool ignoreCase) => ToEnum(s_cache.Parse(value, ignoreCase));
@@ -372,31 +373,29 @@ namespace System
 
             public bool IsDefined(TEnum value) => s_cache.IsDefined(ToUnderlying(value));
 
-            public byte ToByte(TEnum value) => ToUnderlying(value).ToByte(CultureInfo.CurrentCulture);
+            public byte ToByte(TEnum value) => ToUnderlying(value).ToByte(null);
 
-            public short ToInt16(TEnum value) => ToUnderlying(value).ToInt16(CultureInfo.CurrentCulture);
+            public short ToInt16(TEnum value) => ToUnderlying(value).ToInt16(null);
 
-            public int ToInt32(TEnum value) => ToUnderlying(value).ToInt32(CultureInfo.CurrentCulture);
+            public int ToInt32(TEnum value) => ToUnderlying(value).ToInt32(null);
 
-            public long ToInt64(TEnum value) => ToUnderlying(value).ToInt64(CultureInfo.CurrentCulture);
+            public long ToInt64(TEnum value) => ToUnderlying(value).ToInt64(null);
 
             public TEnum ToObject(object value) => ToEnum(s_cache.ToObject(value));
 
-            public TEnum ToObject(long value) => ToEnum(s_cache.ToObject(value));
-
             public TEnum ToObject(ulong value) => ToEnum(s_cache.ToObject(value));
 
-            public sbyte ToSByte(TEnum value) => ToUnderlying(value).ToSByte(CultureInfo.CurrentCulture);
+            public sbyte ToSByte(TEnum value) => ToUnderlying(value).ToSByte(null);
 
             public string ToString(TEnum value) => s_cache.ToString(ToUnderlying(value));
 
             public string ToString(TEnum value, string format) => s_cache.ToString(ToUnderlying(value), format);
 
-            public ushort ToUInt16(TEnum value) => ToUnderlying(value).ToUInt16(CultureInfo.CurrentCulture);
+            public ushort ToUInt16(TEnum value) => ToUnderlying(value).ToUInt16(null);
 
-            public uint ToUInt32(TEnum value) => ToUnderlying(value).ToUInt32(CultureInfo.CurrentCulture);
+            public uint ToUInt32(TEnum value) => ToUnderlying(value).ToUInt32(null);
 
-            public ulong ToUInt64(TEnum value) => ToUnderlying(value).ToUInt64(CultureInfo.CurrentCulture);
+            public ulong ToUInt64(TEnum value) => ToUnderlying(value).ToUInt64(null);
 
             public TEnum AllFlags => ToEnum(s_cache._allFlags);
 
@@ -404,6 +403,8 @@ namespace System
 
             public TEnum CombineFlags(IEnumerable<TEnum> flags)
             {
+                Debug.Assert(flags != null);
+
                 TUnderlying result = s_operators.Zero;
                 foreach (TEnum flag in flags)
                 {
@@ -446,7 +447,8 @@ namespace System
             #region IEnumBridge
             private static TEnum ToEnum(object value)
             {
-                // Not null validation should already be handled
+                Debug.Assert(value != null);
+                
                 if (!(value is TEnum enumValue))
                 {
                     throw new ArgumentException(SR.Format(SR.Arg_EnumAndObjectMustBeSameType, value.GetType().ToString(), typeof(TEnum).ToString()));
@@ -458,6 +460,8 @@ namespace System
 
             public object CombineFlags(IEnumerable<object> flags)
             {
+                Debug.Assert(flags != null);
+
                 TEnum result = default;
                 foreach (object flag in flags)
                 {
@@ -475,9 +479,14 @@ namespace System
 
             public object CommonFlags(object value, object flags) => CommonFlags(ToEnum(value), ToEnum(flags));
 
-            public int CompareTo(Enum value, object other) => CompareTo((TEnum)value, ToEnum(other));
+            public int CompareTo(Enum value, object other)
+            {
+                Debug.Assert(other != null);
 
-            public bool Equals(Enum value, object other) => value is TEnum enumValue ? Equals((TEnum)value, enumValue) : false;
+                return CompareTo((TEnum)value, ToEnum(other));
+            }
+
+            public bool Equals(Enum value, object other) => other is TEnum enumValue ? Equals((TEnum)value, enumValue) : false;
 
             public string Format(object value, string format) => Format(ToEnum(value), format);
 
@@ -517,15 +526,15 @@ namespace System
 
             public object RemoveFlags(object value, object flags) => RemoveFlags(ToEnum(value), ToEnum(flags));
 
-            public bool ToBoolean(Enum value) => ToUnderlying((TEnum)value).ToBoolean(CultureInfo.CurrentCulture);
+            public bool ToBoolean(Enum value) => ToUnderlying((TEnum)value).ToBoolean(null);
 
             public byte ToByte(Enum value) => ToByte((TEnum)value);
 
-            public char ToChar(Enum value) => ToUnderlying((TEnum)value).ToChar(CultureInfo.CurrentCulture);
+            public char ToChar(Enum value) => ToUnderlying((TEnum)value).ToChar(null);
 
-            public decimal ToDecimal(Enum value) => ToUnderlying((TEnum)value).ToDecimal(CultureInfo.CurrentCulture);
+            public decimal ToDecimal(Enum value) => ToUnderlying((TEnum)value).ToDecimal(null);
 
-            public double ToDouble(Enum value) => ToUnderlying((TEnum)value).ToDouble(CultureInfo.CurrentCulture);
+            public double ToDouble(Enum value) => ToUnderlying((TEnum)value).ToDouble(null);
 
             public short ToInt16(Enum value) => ToInt16((TEnum)value);
 
@@ -533,15 +542,13 @@ namespace System
 
             public long ToInt64(Enum value) => ToInt64((TEnum)value);
 
-            object IEnumBridge.ToObject(long value) => ToObject(value);
-
             object IEnumBridge.ToObject(object value) => ToObject(value);
 
             object IEnumBridge.ToObject(ulong value) => ToObject(value);
 
             public sbyte ToSByte(Enum value) => ToSByte((TEnum)value);
 
-            public float ToSingle(Enum value) => ToUnderlying((TEnum)value).ToSingle(CultureInfo.CurrentCulture);
+            public float ToSingle(Enum value) => ToUnderlying((TEnum)value).ToSingle(null);
 
             public string ToString(Enum value) => ToString((TEnum)value);
 
@@ -691,7 +698,7 @@ namespace System
                 {
                     // Makes sure is in increasing value order, due to no removals
                     List<KeyValuePair<TUnderlying, EnumMemberInternal>> values = new List<KeyValuePair<TUnderlying, EnumMemberInternal>>(_valueMap);
-                    values.Sort((first, second) => first.Value.CompareTo(second.Value));
+                    values.Sort((x, y) => x.Value.CompareTo(y.Value));
                     _valueMap = new Dictionary<TUnderlying, EnumMemberInternal>(_valueMap.Count);
 
                     foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in values)
@@ -703,13 +710,13 @@ namespace System
                     _minDefined = values[0].Key;
                 }
 
-                _isContiguous = s_operators.Subtract(_maxDefined, s_operators.ToObject(_valueMap.Count - 1)).Equals(_minDefined);
+                _isContiguous = s_operators.Subtract(_maxDefined, s_operators.ToObject((ulong)(_valueMap.Count - 1))).Equals(_minDefined);
 
                 if (duplicateValues.Count > 0)
                 {
                     duplicateValues.Capacity = duplicateValues.Count;
                     // Makes sure is in increasing value order
-                    duplicateValues.Sort();
+                    duplicateValues.Sort((x, y) => x.CompareTo(y));
                     _duplicateValues = duplicateValues;
                 }
             }
@@ -769,8 +776,6 @@ namespace System
                 }
             }
 
-            public TUnderlying ToObject(long value) => s_operators.ToObject(value);
-
             public TUnderlying ToObject(ulong value) => s_operators.ToObject(value);
 
             public string GetName(TUnderlying value) => _valueMap.TryGetValue(value, out EnumMemberInternal member) ? member.Name : null;
@@ -779,6 +784,8 @@ namespace System
 
             public bool IsDefined(object value)
             {
+                Debug.Assert(value?.GetType() != _enumType);
+
                 switch (value)
                 {
                     case TUnderlying underlyingValue:
@@ -1035,7 +1042,7 @@ namespace System
                 return false;
             }
 
-            public struct EnumMemberInternal : IComparable<EnumMemberInternal>
+            public struct EnumMemberInternal
             {
                 public TUnderlying Value;
                 public string Name;
@@ -1065,7 +1072,6 @@ namespace System
             TUnderlying Or(TUnderlying left, TUnderlying right);
             TUnderlying Subtract(TUnderlying left, TUnderlying right);
             string ToHexString(TUnderlying value);
-            TUnderlying ToObject(long value);
             TUnderlying ToObject(ulong value);
             ulong ToUInt64(TUnderlying value);
             bool TryParse(ReadOnlySpan<char> span, out TUnderlying result);
@@ -1093,13 +1099,11 @@ namespace System
 
             public string ToHexString(byte value) => value.ToString("X2");
 
-            public byte ToObject(long value) => (byte)value;
-
             public byte ToObject(ulong value) => (byte)value;
 
             public ulong ToUInt64(byte value) => value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out byte result) => byte.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out byte result) => byte.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct SByteOperators : IUnderlyingOperators<sbyte>
@@ -1124,13 +1128,11 @@ namespace System
 
             public string ToHexString(sbyte value) => value.ToString("X2");
 
-            public sbyte ToObject(long value) => (sbyte)value;
-
             public sbyte ToObject(ulong value) => (sbyte)value;
 
             public ulong ToUInt64(sbyte value) => (ulong)value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out sbyte result) => sbyte.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out sbyte result) => sbyte.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct Int16Operators : IUnderlyingOperators<short>
@@ -1155,13 +1157,11 @@ namespace System
 
             public string ToHexString(short value) => value.ToString("X4");
 
-            public short ToObject(long value) => (short)value;
-
             public short ToObject(ulong value) => (short)value;
 
             public ulong ToUInt64(short value) => (ulong)value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out short result) => short.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out short result) => short.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct UInt16Operators : IUnderlyingOperators<ushort>
@@ -1186,13 +1186,11 @@ namespace System
 
             public string ToHexString(ushort value) => value.ToString("X4");
 
-            public ushort ToObject(long value) => (ushort)value;
-
             public ushort ToObject(ulong value) => (ushort)value;
 
             public ulong ToUInt64(ushort value) => value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out ushort result) => ushort.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out ushort result) => ushort.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct Int32Operators : IUnderlyingOperators<int>
@@ -1217,13 +1215,11 @@ namespace System
 
             public string ToHexString(int value) => value.ToString("X8");
 
-            public int ToObject(long value) => (int)value;
-
             public int ToObject(ulong value) => (int)value;
 
             public ulong ToUInt64(int value) => (ulong)value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out int result) => int.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out int result) => int.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct UInt32Operators : IUnderlyingOperators<uint>
@@ -1248,13 +1244,11 @@ namespace System
 
             public string ToHexString(uint value) => value.ToString("X8");
 
-            public uint ToObject(long value) => (uint)value;
-
             public uint ToObject(ulong value) => (uint)value;
 
             public ulong ToUInt64(uint value) => value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out uint result) => uint.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out uint result) => uint.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct Int64Operators : IUnderlyingOperators<long>
@@ -1279,13 +1273,11 @@ namespace System
 
             public string ToHexString(long value) => value.ToString("X16");
 
-            public long ToObject(long value) => value;
-
             public long ToObject(ulong value) => (long)value;
 
             public ulong ToUInt64(long value) => (ulong)value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out long result) => long.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out long result) => long.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct UInt64Operators : IUnderlyingOperators<ulong>
@@ -1310,13 +1302,11 @@ namespace System
 
             public string ToHexString(ulong value) => value.ToString("X16");
 
-            public ulong ToObject(long value) => (ulong)value;
-
             public ulong ToObject(ulong value) => value;
 
             public ulong ToUInt64(ulong value) => value;
 
-            public bool TryParse(ReadOnlySpan<char> span, out ulong result) => ulong.TryParse(span, out result);
+            public bool TryParse(ReadOnlySpan<char> span, out ulong result) => ulong.TryParse(span, NumberStyles.Integer, null, out result);
         }
 
         private struct BooleanOperators : IUnderlyingOperators<bool>
@@ -1340,8 +1330,6 @@ namespace System
             public bool Subtract(bool left, bool right) => left ^ right;
 
             public string ToHexString(bool value) => Convert.ToByte(value).ToString("X2");
-
-            public bool ToObject(long value) => value != 0L;
 
             public bool ToObject(ulong value) => value != 0UL;
 
@@ -1371,8 +1359,6 @@ namespace System
             public char Subtract(char left, char right) => (char)(left - right);
 
             public string ToHexString(char value) => ((ushort)value).ToString("X4");
-
-            public char ToObject(long value) => (char)value;
 
             public char ToObject(ulong value) => (char)value;
 
@@ -1430,7 +1416,15 @@ namespace System
         [Intrinsic]
         [Obsolete("Please use System.Flags.FlagEnum's HasAllFlags or HasAnyFlags method instead.")]
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public bool HasFlag(Enum flag) => Bridge.HasAllFlags(this, flag);
+        public bool HasFlag(Enum flag)
+        {
+            if (flag == null)
+            {
+                throw new ArgumentNullException(nameof(flag));
+            }
+
+            return Bridge.HasAllFlags(this, flag);
+        }
         #endregion
 
         #region IConvertable
@@ -1489,18 +1483,18 @@ namespace System
 
         #region ToObject
         [CLSCompliant(false)]
-        public static object ToObject(Type enumType, sbyte value) => GetBridge(enumType).ToObject(value);
+        public static object ToObject(Type enumType, sbyte value) => GetBridge(enumType).ToObject((ulong)value);
 
         [CLSCompliant(false)]
-        public static TEnum ToObject<TEnum>(sbyte value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+        public static TEnum ToObject<TEnum>(sbyte value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject((ulong)value);
 
-        public static object ToObject(Type enumType, short value) => GetBridge(enumType).ToObject(value);
+        public static object ToObject(Type enumType, short value) => GetBridge(enumType).ToObject((ulong)value);
         
-        public static TEnum ToObject<TEnum>(short value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+        public static TEnum ToObject<TEnum>(short value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject((ulong)value);
 
-        public static object ToObject(Type enumType, int value) => GetBridge(enumType).ToObject(value);
+        public static object ToObject(Type enumType, int value) => GetBridge(enumType).ToObject((ulong)value);
         
-        public static TEnum ToObject<TEnum>(int value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+        public static TEnum ToObject<TEnum>(int value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject((ulong)value);
 
         public static object ToObject(Type enumType, byte value) => GetBridge(enumType).ToObject(value);
         
@@ -1518,9 +1512,9 @@ namespace System
         [CLSCompliant(false)]
         public static TEnum ToObject<TEnum>(uint value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
 
-        public static object ToObject(Type enumType, long value) => GetBridge(enumType).ToObject(value);
+        public static object ToObject(Type enumType, long value) => GetBridge(enumType).ToObject((ulong)value);
         
-        public static TEnum ToObject<TEnum>(long value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject(value);
+        public static TEnum ToObject<TEnum>(long value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.ToObject((ulong)value);
 
         [CLSCompliant(false)]
         public static object ToObject(Type enumType, ulong value) => GetBridge(enumType).ToObject(value);
