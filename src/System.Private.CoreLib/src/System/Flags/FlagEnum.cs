@@ -50,34 +50,131 @@ namespace System.Flags
 
         public static object AllFlags(Type enumType) => Enum.GetBridge(enumType).AllFlags;
 
-        public static object CombineFlags(Type enumType, object value, object flags) => Enum.GetBridge(enumType).CombineFlags(value, flags);
+        public static object CombineFlags(Type enumType, object value, object flags)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+            if (flags == null)
+            {
+                throw new ArgumentNullException(nameof(flags));
+            }
+
+            return Enum.GetBridge(enumType).CombineFlags(value, flags);
+        }
 
         public static object CombineFlags(Type enumType, params object[] flags) => CombineFlags(enumType, (IEnumerable<object>)flags);
 
-        public static object CombineFlags(Type enumType, IEnumerable<object> flags) => Enum.GetBridge(enumType).CombineFlags(flags);
+        public static object CombineFlags(Type enumType, IEnumerable<object> flags)
+        {
+            if (flags == null)
+            {
+                throw new ArgumentNullException(nameof(flags));
+            }
 
-        public static object CommonFlags(Type enumType, object value, object flags) => Enum.GetBridge(enumType).CommonFlags(value, flags);
+            return Enum.GetBridge(enumType).CombineFlags(flags);
+        }
+
+        public static object CommonFlags(Type enumType, object value, object flags)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+            if (flags == null)
+            {
+                throw new ArgumentNullException(nameof(flags));
+            }
+
+            return Enum.GetBridge(enumType).CommonFlags(value, flags);
+        }
 
         public static IEnumerable<object> GetFlags(Type enumType, object value)
         {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
             foreach (object flag in Enum.GetBridge(enumType).GetFlags(value))
             {
                 yield return flag;
             }
         }
 
-        public static bool HasAllFlags(Type enumType, object value) => Enum.GetBridge(enumType).HasAllFlags(value);
+        public static bool HasAllFlags(Type enumType, object value)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
 
-        public static bool HasAllFlags(Type enumType, object value, object flags) => Enum.GetBridge(enumType).HasAllFlags(value, flags);
+            return Enum.GetBridge(enumType).HasAllFlags(value);
+        }
 
-        public static bool HasAnyFlags(Type enumType, object value) => Enum.GetBridge(enumType).HasAnyFlags(value);
+        public static bool HasAllFlags(Type enumType, object value, object flags)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+            if (flags == null)
+            {
+                throw new ArgumentNullException(nameof(flags));
+            }
 
-        public static bool HasAnyFlags(Type enumType, object value, object flags) => Enum.GetBridge(enumType).HasAnyFlags(value, flags);
+            return Enum.GetBridge(enumType).HasAllFlags(value, flags);
+        }
+
+        public static bool HasAnyFlags(Type enumType, object value)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            return Enum.GetBridge(enumType).HasAnyFlags(value);
+        }
+
+        public static bool HasAnyFlags(Type enumType, object value, object flags)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+            if (flags == null)
+            {
+                throw new ArgumentNullException(nameof(flags));
+            }
+
+            return Enum.GetBridge(enumType).HasAnyFlags(value, flags);
+        }
 
         public static bool IsFlagEnum(Type enumType) => Enum.GetBridge(enumType).IsFlagEnum;
 
-        public static bool IsValidFlagCombination(Type enumType, object value) => Enum.GetBridge(enumType).IsValidFlagCombination(value);
+        public static bool IsValidFlagCombination(Type enumType, object value)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
 
-        public static object RemoveFlags(Type enumType, object value, object flags) => Enum.GetBridge(enumType).RemoveFlags(value, flags);
+            return Enum.GetBridge(enumType).IsValidFlagCombination(value);
+        }
+
+        public static object RemoveFlags(Type enumType, object value, object flags)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+            if (flags == null)
+            {
+                throw new ArgumentNullException(nameof(flags));
+            }
+
+            return Enum.GetBridge(enumType).RemoveFlags(value, flags);
+        }
     }
 }

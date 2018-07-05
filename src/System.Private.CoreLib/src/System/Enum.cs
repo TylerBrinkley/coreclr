@@ -7,7 +7,6 @@ using System.Text;
 using System.Collections;
 using System.Globalization;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using Internal.Runtime.CompilerServices;
 using System.Collections.Generic;
 using shared.System.ComponentModel;
@@ -43,9 +42,8 @@ namespace System
             {
                 throw new ArgumentNullException(nameof(enumType));
             }
-
-            RuntimeType rtType = enumType as RuntimeType;
-            if (rtType == null)
+            
+            if (!(enumType is RuntimeType rtType))
             {
                 throw new ArgumentException(SR.Arg_MustBeType, nameof(enumType));
             }
@@ -87,7 +85,7 @@ namespace System
         #endregion
 
         #region Public Static Methods
-        public static bool TryParse(Type enumType, string value, out object result) => TryParse(enumType, value.AsSpan(), false, out result);
+        public static bool TryParse(Type enumType, string value, out object result) => TryParse(enumType, value, false, out result);
 
         public static bool TryParse(Type enumType, string value, bool ignoreCase, out object result) => TryParse(enumType, value.AsSpan(), ignoreCase, out result);
 
@@ -95,7 +93,7 @@ namespace System
 
         public static bool TryParse(Type enumType, ReadOnlySpan<char> value, bool ignoreCase, out object result) => GetBridge(enumType).TryParse(value, ignoreCase, out result);
 
-        public static bool TryParse<TEnum>(string value, out TEnum result) where TEnum : struct, Enum => TryParse(value.AsSpan(), false, out result);
+        public static bool TryParse<TEnum>(string value, out TEnum result) where TEnum : struct, Enum => TryParse(value, false, out result);
 
         public static bool TryParse<TEnum>(string value, bool ignoreCase, out TEnum result) where TEnum : struct, Enum => TryParse(value.AsSpan(), ignoreCase, out result);
 
@@ -103,17 +101,33 @@ namespace System
 
         public static bool TryParse<TEnum>(ReadOnlySpan<char> value, bool ignoreCase, out TEnum result) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.TryParse(value, ignoreCase, out result);
 
-        public static object Parse(Type enumType, string value) => Parse(enumType, value.AsSpan(), false);
+        public static object Parse(Type enumType, string value) => Parse(enumType, value, false);
 
-        public static object Parse(Type enumType, string value, bool ignoreCase) => Parse(enumType, value.AsSpan(), ignoreCase);
+        public static object Parse(Type enumType, string value, bool ignoreCase)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            return Parse(enumType, value.AsSpan(), ignoreCase);
+        }
 
         public static object Parse(Type enumType, ReadOnlySpan<char> value) => Parse(enumType, value, false);
 
         public static object Parse(Type enumType, ReadOnlySpan<char> value, bool ignoreCase) => GetBridge(enumType).Parse(value, ignoreCase);
 
-        public static TEnum Parse<TEnum>(string value) where TEnum : struct, Enum => Parse<TEnum>(value.AsSpan(), false);
+        public static TEnum Parse<TEnum>(string value) where TEnum : struct, Enum => Parse<TEnum>(value, false);
 
-        public static TEnum Parse<TEnum>(string value, bool ignoreCase) where TEnum : struct, Enum => Parse<TEnum>(value.AsSpan(), ignoreCase);
+        public static TEnum Parse<TEnum>(string value, bool ignoreCase) where TEnum : struct, Enum
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            return Parse<TEnum>(value.AsSpan(), ignoreCase);
+        }
 
         public static TEnum Parse<TEnum>(ReadOnlySpan<char> value) where TEnum : struct, Enum => Parse<TEnum>(value, false);
 
@@ -156,12 +170,21 @@ namespace System
 
         public static bool IsDefined<TEnum>(TEnum value) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.IsDefined(value);
 
-        public static string Format(Type enumType, object value, string format) => GetBridge(enumType).Format(value, format);
+        public static string Format(Type enumType, object value, string format)
+        {
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            return GetBridge(enumType).Format(value, format);
+        }
 
         public static string Format<TEnum>(TEnum value, string format) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.Format(value, format);
         #endregion
 
         #region Definitions
+        #region EnumBridge
         internal static class EnumBridge<TEnum> where TEnum : struct, Enum
         {
             public readonly static IEnumBridge<TEnum> Bridge = CreateEnumBridge();
@@ -191,8 +214,9 @@ namespace System
                         return new EnumBridge<TEnum, bool, BooleanOperators>();
                     case TypeCode.Char:
                         return new EnumBridge<TEnum, char, CharOperators>();
+                    default:
+                        return null;
                 }
-                throw new NotSupportedException($"Enum underlying type of {underlyingType} is not supported");
             }
         }
 
@@ -412,30 +436,53 @@ namespace System
 
             public bool IsValidFlagCombination(TEnum value) => s_operators.And(ToUnderlying(value), s_cache._allFlags).Equals(ToUnderlying(value));
 
+            public TEnum RemoveFlags(TEnum value, TEnum flags) => ToEnum(s_operators.And(ToUnderlying(value), s_operators.Not(ToUnderlying(flags))));
+
             public int Count => s_cache._valueMap.Count + (s_cache._duplicateValues?.Count ?? 0);
 
             #region IEnumBridge
+            private static TEnum ToEnum(object value)
+            {
+                // Not null validation should already be handled
+                if (!(value is TEnum enumValue))
+                {
+                    throw new ArgumentException(SR.Format(SR.Arg_EnumAndObjectMustBeSameType, value.GetType().ToString(), typeof(TEnum).ToString()));
+                }
+                return enumValue;
+            }
+
             object IEnumBridge.AllFlags => AllFlags;
 
-            public TEnum RemoveFlags(TEnum value, TEnum flags) => ToEnum(s_operators.And(ToUnderlying(value), s_operators.Not(ToUnderlying(flags))));
+            public object CombineFlags(IEnumerable<object> flags)
+            {
+                TEnum result = default;
+                foreach (object flag in flags)
+                {
+                    if (flag == null)
+                    {
+                        throw new ArgumentNullException(nameof(flag));
+                    }
 
-            public object CombineFlags(IEnumerable<object> flags) => throw new NotImplementedException();
+                    result = CombineFlags(result, ToEnum(flag));
+                }
+                return result;
+            }
 
-            public object CombineFlags(object value, object flags) => throw new NotImplementedException();
+            public object CombineFlags(object value, object flags) => CombineFlags(ToEnum(value), ToEnum(flags));
 
-            public object CommonFlags(object value, object flags) => throw new NotImplementedException();
+            public object CommonFlags(object value, object flags) => CommonFlags(ToEnum(value), ToEnum(flags));
 
-            public int CompareTo(Enum value, object other) => throw new NotImplementedException();
+            public int CompareTo(Enum value, object other) => CompareTo((TEnum)value, ToEnum(other));
 
-            public bool Equals(Enum value, object other) => throw new NotImplementedException();
+            public bool Equals(Enum value, object other) => value is TEnum enumValue ? Equals((TEnum)value, enumValue) : false;
 
-            public string Format(object value, string format) => throw new NotImplementedException();
+            public string Format(object value, string format) => Format(ToEnum(value), format);
 
-            public IEnumerable GetFlags(object value) => throw new NotImplementedException();
+            public IEnumerable GetFlags(object value) => GetFlags(ToEnum(value));
 
             public int GetHashCode(Enum value) => ToUnderlying((TEnum)value).GetHashCode();
 
-            public string GetName(object value) => throw new NotImplementedException();
+            public string GetName(object value) => GetName(value is TEnum enumValue ? enumValue : ToObject(value));
 
             public object GetUnderlyingValue(Enum value) => ToUnderlying((TEnum)value);
 
@@ -451,21 +498,21 @@ namespace System
                 return array;
             }
 
-            public bool HasAllFlags(object value) => throw new NotImplementedException();
+            public bool HasAllFlags(object value) => HasAllFlags(ToEnum(value));
 
-            public bool HasAllFlags(object value, object flags) => throw new NotImplementedException();
+            public bool HasAllFlags(object value, object flags) => HasAllFlags(ToEnum(value), ToEnum(flags));
 
-            public bool HasAnyFlags(object value) => throw new NotImplementedException();
+            public bool HasAnyFlags(object value) => HasAnyFlags(ToEnum(value));
 
-            public bool HasAnyFlags(object value, object flags) => throw new NotImplementedException();
+            public bool HasAnyFlags(object value, object flags) => HasAnyFlags(ToEnum(value), ToEnum(flags));
 
-            public bool IsDefined(object value) => throw new NotImplementedException();
+            public bool IsDefined(object value) => value is TEnum enumValue ? IsDefined(enumValue) : s_cache.IsDefined(value);
 
-            public bool IsValidFlagCombination(object value) => throw new NotImplementedException();
+            public bool IsValidFlagCombination(object value) => IsValidFlagCombination(ToEnum(value));
 
             object IEnumBridge.Parse(ReadOnlySpan<char> value, bool ignoreCase) => Parse(value, ignoreCase);
 
-            public object RemoveFlags(object value, object flags) => throw new NotImplementedException();
+            public object RemoveFlags(object value, object flags) => RemoveFlags(ToEnum(value), ToEnum(flags));
 
             public bool ToBoolean(Enum value) => ToUnderlying((TEnum)value).ToBoolean(CultureInfo.CurrentCulture);
 
@@ -511,12 +558,16 @@ namespace System
             }
             #endregion
         }
+        #endregion
 
+        #region EnumCache
         private sealed class EnumCache<TUnderlying, TUnderlyingOperators>
             where TUnderlying : struct, IComparable<TUnderlying>, IEquatable<TUnderlying>, IConvertible
             where TUnderlyingOperators : struct, IUnderlyingOperators<TUnderlying>
         {
             internal static readonly TUnderlyingOperators s_operators = new TUnderlyingOperators();
+
+            private readonly Type _enumType;
 
             internal readonly TUnderlying _allFlags;
 
@@ -575,6 +626,7 @@ namespace System
 
             public EnumCache(Type enumType)
             {
+                _enumType = enumType;
                 _isFlagEnum = enumType.IsDefined(typeof(FlagsAttribute), false);
 
                 FieldInfo[] fields = enumType.GetFields(BindingFlags.Public | BindingFlags.Static);
@@ -721,6 +773,46 @@ namespace System
             public string GetName(TUnderlying value) => _valueMap.TryGetValue(value, out EnumMemberInternal member) ? member.Name : null;
 
             public bool IsDefined(TUnderlying value) => _isContiguous ? !(s_operators.LessThan(value, _minDefined) || s_operators.LessThan(_maxDefined, value)) : _valueMap.ContainsKey(value);
+
+            public bool IsDefined(object value)
+            {
+                switch (value)
+                {
+                    case TUnderlying underlyingValue:
+                        return IsDefined(underlyingValue);
+                    case string str:
+                        return TryParseInternal(str.AsSpan(), false, out _, out bool isNumeric) && !isNumeric;
+                    case null:
+                        throw new ArgumentNullException(nameof(value));
+                }
+                
+                Type valueType = value.GetType();
+                
+                // Check if is another type of enum as checking for the current enum type is handled in EnumBridge
+                if (valueType.IsEnum)
+                {
+                    throw new ArgumentException(SR.Format(SR.Arg_EnumAndObjectMustBeSameType, valueType.ToString(), _enumType.ToString()));
+                }
+
+                TypeCode typeCode = Convert.GetTypeCode(value);
+
+                switch (typeCode)
+                {
+                    case TypeCode.SByte:
+                    case TypeCode.Byte:
+                    case TypeCode.Int16:
+                    case TypeCode.UInt16:
+                    case TypeCode.Int32:
+                    case TypeCode.UInt32:
+                    case TypeCode.Int64:
+                    case TypeCode.UInt64:
+                    case TypeCode.Boolean:
+                    case TypeCode.Char:
+                        throw new ArgumentException(SR.Format(SR.Arg_EnumUnderlyingTypeAndObjectMustBeSameType, valueType.ToString(), typeof(TUnderlying).ToString()));
+                    default:
+                        throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
+                }
+            }
 
             public string ToString(TUnderlying value)
             {
@@ -933,6 +1025,7 @@ namespace System
                         }
                     }
 
+                    isNumeric = false;
                     return true;
                 }
 
@@ -953,6 +1046,7 @@ namespace System
                 public int CompareTo(EnumMemberInternal other) => s_operators.ToUInt64(Value).CompareTo(s_operators.ToUInt64(other.Value));
             }
         }
+        #endregion
 
         #region UnderlyingOperators
         private interface IUnderlyingOperators<TUnderlying>
@@ -1315,7 +1409,7 @@ namespace System
         #endregion
 
         #region IComparable
-        public int CompareTo(object target) => Bridge.CompareTo(this, target);
+        public int CompareTo(object target) => target != null ? Bridge.CompareTo(this, target) : 1;
 
         public static int CompareTo<TEnum>(TEnum value, TEnum other) where TEnum : struct, Enum => EnumBridge<TEnum>.Bridge.CompareTo(value, other);
         #endregion
@@ -1329,7 +1423,7 @@ namespace System
         public string ToString(IFormatProvider provider) => ToString();
 
         [Intrinsic]
-        [Obsolete("Please use FlagEnum.HasAllFlags or FlagEnum.HasAnyFlags instead.")]
+        [Obsolete("Please use System.Flags.FlagEnum's HasAllFlags or HasAnyFlags method instead.")]
         [EditorBrowsable(EditorBrowsableState.Never)]
         public bool HasFlag(Enum flag) => Bridge.HasAllFlags(this, flag);
         #endregion
