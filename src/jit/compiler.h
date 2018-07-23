@@ -183,6 +183,13 @@ public:
 
 typedef JitExpandArray<LclSsaVarDsc> PerSsaArray;
 
+enum RefCountState
+{
+    RCS_INVALID, // not valid to get/set ref counts
+    RCS_EARLY,   // early counts for struct promotion and struct passing
+    RCS_NORMAL,  // normal ref counts (from lvaMarkRefs onward)
+};
+
 class LclVarDsc
 {
 public:
@@ -306,6 +313,9 @@ public:
 #ifdef DEBUG
     unsigned char lvClassInfoUpdated : 1; // true if this var has updated class handle or exactness
 #endif
+
+    unsigned char lvImplicitlyReferenced : 1; // true if there are non-IR references to this local (prolog, epilog, gc,
+                                              // eh)
 
     union {
         unsigned lvFieldLclStart; // The index of the local var representing the first field in the promoted struct
@@ -591,15 +601,30 @@ public:
     regMaskSmall lvPrefReg; // set of regs it prefers to live in
 
     unsigned short lvVarIndex; // variable tracking index
-    unsigned short lvRefCnt;   // unweighted (real) reference count.  For implicit by reference
+
+private:
+    unsigned short m_lvRefCnt; // unweighted (real) reference count.  For implicit by reference
                                // parameters, this gets hijacked from fgMarkImplicitByRefArgs
                                // through fgMarkDemotedImplicitByRefArgs, to provide a static
                                // appearance count (computed during address-exposed analysis)
                                // that fgMakeOutgoingStructArgCopy consults during global morph
                                // to determine if eliding its copy is legal.
-    unsigned lvRefCntWtd;      // weighted reference count
-    int      lvStkOffs;        // stack offset of home
-    unsigned lvExactSize;      // (exact) size of the type in bytes
+
+    BasicBlock::weight_t m_lvRefCntWtd; // weighted reference count
+
+public:
+    unsigned short lvRefCnt(RefCountState state = RCS_NORMAL) const;
+    void incLvRefCnt(unsigned short delta, RefCountState state = RCS_NORMAL);
+    void decLvRefCnt(unsigned short delta, RefCountState state = RCS_NORMAL);
+    void setLvRefCnt(unsigned short newValue, RefCountState state = RCS_NORMAL);
+
+    BasicBlock::weight_t lvRefCntWtd(RefCountState state = RCS_NORMAL) const;
+    void incLvRefCntWtd(BasicBlock::weight_t delta, RefCountState state = RCS_NORMAL);
+    void decLvRefCntWtd(BasicBlock::weight_t delta, RefCountState state = RCS_NORMAL);
+    void setLvRefCntWtd(BasicBlock::weight_t newValue, RefCountState state = RCS_NORMAL);
+
+    int      lvStkOffs;   // stack offset of home
+    unsigned lvExactSize; // (exact) size of the type in bytes
 
     // Is this a promoted struct?
     // This method returns true only for structs (including SIMD structs), not for
@@ -687,9 +712,15 @@ public:
                !(lvIsParam || lvAddrExposed || lvIsStructField);
     }
 
-    void lvaResetSortAgainFlag(Compiler* pComp);
-    void decRefCnts(BasicBlock::weight_t weight, Compiler* pComp, bool propagate = true);
-    void incRefCnts(BasicBlock::weight_t weight, Compiler* pComp, bool propagate = true);
+    void lvaResetSortAgainFlag(Compiler* pComp, RefCountState = RCS_NORMAL);
+    void decRefCnts(BasicBlock::weight_t weight,
+                    Compiler*            pComp,
+                    RefCountState        state     = RCS_NORMAL,
+                    bool                 propagate = true);
+    void incRefCnts(BasicBlock::weight_t weight,
+                    Compiler*            pComp,
+                    RefCountState        state     = RCS_NORMAL,
+                    bool                 propagate = true);
     void setPrefReg(regNumber regNum, Compiler* pComp);
     void addPrefReg(regMaskTP regMask, Compiler* pComp);
     bool IsFloatRegType() const
@@ -2172,6 +2203,8 @@ public:
                                                    GenTree*       op1,
                                                    GenTree*       op2,
                                                    NamedIntrinsic hwIntrinsicID);
+    GenTreeHWIntrinsic* gtNewScalarHWIntrinsicNode(
+        var_types type, GenTree* op1, GenTree* op2, GenTree* op3, NamedIntrinsic hwIntrinsicID);
     GenTree* gtNewMustThrowException(unsigned helper, var_types type, CORINFO_CLASS_HANDLE clsHnd);
     CORINFO_CLASS_HANDLE gtGetStructHandleForHWSIMD(var_types simdType, var_types simdBaseType);
 #endif // FEATURE_HW_INTRINSICS
@@ -2502,11 +2535,16 @@ public:
     };
 
 public:
-    bool     lvaRefCountingStarted; // Set to true when we have started counting the local vars
-    bool     lvaLocalVarRefCounted; // Set to true after we have called lvaMarkLocalVars()
-    bool     lvaSortAgain;          // true: We need to sort the lvaTable
-    bool     lvaTrackedFixed;       // true: We cannot add new 'tracked' variable
-    unsigned lvaCount;              // total number of locals
+    RefCountState lvaRefCountState; // Current local ref count state
+
+    bool lvaLocalVarRefCounted() const
+    {
+        return lvaRefCountState == RCS_NORMAL;
+    }
+
+    bool     lvaSortAgain;    // true: We need to sort the lvaTable
+    bool     lvaTrackedFixed; // true: We cannot add new 'tracked' variable
+    unsigned lvaCount;        // total number of locals
 
     unsigned   lvaRefCount; // total number of references to locals
     LclVarDsc* lvaTable;    // variable descriptor table

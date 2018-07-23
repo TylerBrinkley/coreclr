@@ -267,8 +267,6 @@
     <Compile Include="$(BclSourcesRoot)\System\BadImageFormatException.CoreCLR.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Buffer.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Currency.cs" />
-    <Compile Include="$(BclSourcesRoot)\System\Decimal.cs" />
-    <Compile Include="$(BclSourcesRoot)\System\Decimal.DecCalc.cs" />
     <Compile Include="$(BclSourcesRoot)\System\DefaultBinder.CanConvert.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Enum.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Environment.cs" />
@@ -398,7 +396,6 @@
     <Compile Include="$(BclSourcesRoot)\System\Threading\WaitHandle.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Threading\SpinLock.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Threading\ThreadLocal.cs" />
-    <Compile Include="$(BclSourcesRoot)\System\Threading\ManualResetEventSlim.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Threading\CancellationTokenRegistration.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Threading\CancellationTokenSource.cs" />
     <Compile Include="$(BclSourcesRoot)\System\Threading\Tasks\future.cs" />
@@ -420,7 +417,6 @@
     <Compile Include="$(BclSourcesRoot)\System\Threading\ClrThreadPoolPreAllocatedOverlapped.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="$(BclSourcesRoot)\System\IO\BinaryReader.cs" />
     <Compile Include="$(BclSourcesRoot)\System\IO\FileLoadException.CoreCLR.cs" />
     <Compile Include="$(BclSourcesRoot)\System\IO\FileNotFoundException.CoreCLR.cs" />
     <Compile Include="$(BclSourcesRoot)\System\IO\Stream.CoreCLR.cs" />

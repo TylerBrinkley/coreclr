@@ -1449,8 +1449,6 @@ void Compiler::compShutdown()
     DisplayNowayAssertMap();
 #endif // MEASURE_NOWAY
 
-    ArenaAllocator::shutdown();
-
     /* Shut down the emitter */
 
     emitter::emitDone();
@@ -2367,14 +2365,18 @@ static bool configEnableISA(InstructionSet isa)
             return false;
     }
 #else
-    // We have a retail config switch that can disable AVX/FMA/AVX2 instructions
-    if ((isa == InstructionSet_AVX) || (isa == InstructionSet_FMA) || (isa == InstructionSet_AVX2))
+    // We have a retail config switch that can disable instruction sets reliant on the VEX encoding
+    switch (isa)
     {
-        return JitConfig.EnableAVX() != 0;
-    }
-    else
-    {
-        return true;
+        case InstructionSet_AVX:
+        case InstructionSet_FMA:
+        case InstructionSet_AVX2:
+        case InstructionSet_BMI1:
+        case InstructionSet_BMI2:
+            return JitConfig.EnableAVX() != 0;
+
+        default:
+            return true;
     }
 #endif
 }
@@ -2437,20 +2439,6 @@ void Compiler::compSetProcessor()
                 opts.setSupportedISA(InstructionSet_AES);
             }
         }
-        if (jitFlags.IsSet(JitFlags::JIT_FLAG_USE_BMI1))
-        {
-            if (configEnableISA(InstructionSet_BMI1))
-            {
-                opts.setSupportedISA(InstructionSet_BMI1);
-            }
-        }
-        if (jitFlags.IsSet(JitFlags::JIT_FLAG_USE_BMI2))
-        {
-            if (configEnableISA(InstructionSet_BMI2))
-            {
-                opts.setSupportedISA(InstructionSet_BMI2);
-            }
-        }
         if (jitFlags.IsSet(JitFlags::JIT_FLAG_USE_LZCNT))
         {
             if (configEnableISA(InstructionSet_LZCNT))
@@ -2508,7 +2496,7 @@ void Compiler::compSetProcessor()
             }
         }
 
-        // There are currently two sets of flags that control AVX, FMA, and AVX2 support:
+        // There are currently two sets of flags that control instruction sets that require the VEX encoding:
         // These are the general EnableAVX flag and the individual ISA flags. We need to
         // check both for any given isa.
         if (JitConfig.EnableAVX())
@@ -2532,6 +2520,20 @@ void Compiler::compSetProcessor()
                 if (configEnableISA(InstructionSet_AVX2))
                 {
                     opts.setSupportedISA(InstructionSet_AVX2);
+                }
+            }
+            if (jitFlags.IsSet(JitFlags::JIT_FLAG_USE_BMI1))
+            {
+                if (configEnableISA(InstructionSet_BMI1))
+                {
+                    opts.setSupportedISA(InstructionSet_BMI1);
+                }
+            }
+            if (jitFlags.IsSet(JitFlags::JIT_FLAG_USE_BMI2))
+            {
+                if (configEnableISA(InstructionSet_BMI2))
+                {
+                    opts.setSupportedISA(InstructionSet_BMI2);
                 }
             }
         }
@@ -4693,7 +4695,7 @@ void Compiler::compCompile(void** methodCodePtr, ULONG* methodCodeSize, JitFlags
     // You can test the value of the following variable to see if
     // the local variable ref counts must be updated
     //
-    assert(lvaLocalVarRefCounted == true);
+    assert(lvaLocalVarRefCounted());
 
     if (!opts.MinOpts() && !opts.compDbgCode)
     {
@@ -6619,7 +6621,6 @@ START:
     }
     else
     {
-        alloc.initialize(compHnd->getMemoryManager());
         pAlloc = &alloc;
     }
 
@@ -6715,17 +6716,18 @@ START:
         }
         finallyErrorTrap()
         {
-            // Add a dummy touch to pComp so that it is kept alive, and is easy to get to
-            // during debugging since all other data can be obtained through it.
+            Compiler* pCompiler = pParamOuter->pComp;
+
+            // If OOM is thrown when allocating memory for a pComp, we will end up here.
+            // For this case, pComp and also pCompiler will be a nullptr
             //
-            if (pParamOuter->pComp) // If OOM is thrown when allocating memory for pComp, we will end up here.
-                                    // In that case, pComp is still NULL.
+            if (pCompiler != nullptr)
             {
-                pParamOuter->pComp->info.compCode = nullptr;
+                pCompiler->info.compCode = nullptr;
 
                 // pop the compiler off the TLS stack only if it was linked above
-                assert(JitTls::GetCompiler() == pParamOuter->pComp);
-                JitTls::SetCompiler(JitTls::GetCompiler()->prevCompiler);
+                assert(JitTls::GetCompiler() == pCompiler);
+                JitTls::SetCompiler(pCompiler->prevCompiler);
             }
 
             if (pParamOuter->inlineInfo == nullptr)

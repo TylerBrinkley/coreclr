@@ -130,7 +130,7 @@ void Compiler::optAddCopies()
         }
 
         // We require that the weighted ref count be significant.
-        if (varDsc->lvRefCntWtd <= (BB_LOOP_WEIGHT * BB_UNITY_WEIGHT / 2))
+        if (varDsc->lvRefCntWtd() <= (BB_LOOP_WEIGHT * BB_UNITY_WEIGHT / 2))
         {
             continue;
         }
@@ -144,7 +144,7 @@ void Compiler::optAddCopies()
         BlockSet paramImportantUseDom(BlockSetOps::MakeFull(this));
 
         // This will be threshold for determining heavier-than-average uses
-        unsigned paramAvgWtdRefDiv2 = (varDsc->lvRefCntWtd + varDsc->lvRefCnt / 2) / (varDsc->lvRefCnt * 2);
+        unsigned paramAvgWtdRefDiv2 = (varDsc->lvRefCntWtd() + varDsc->lvRefCnt() / 2) / (varDsc->lvRefCnt() * 2);
 
         bool paramFoundImportantUse = false;
 
@@ -2698,7 +2698,7 @@ GenTree* Compiler::optConstantAssertionProp(AssertionDsc* curAssertion,
         gtDispTree(newTree, nullptr, nullptr, true);
     }
 #endif
-    if (lvaLocalVarRefCounted)
+    if (lvaLocalVarRefCounted())
     {
         lvaTable[lclNum].decRefCnts(compCurBB->getBBWeight(this), this);
     }
@@ -2812,7 +2812,7 @@ GenTree* Compiler::optCopyAssertionProp(AssertionDsc* curAssertion,
     }
 
     // If global assertion prop, by now we should have ref counts, fix them.
-    if (lvaLocalVarRefCounted)
+    if (lvaLocalVarRefCounted())
     {
         lvaTable[lclNum].decRefCnts(compCurBB->getBBWeight(this), this);
         lvaTable[copyLclNum].incRefCnts(compCurBB->getBBWeight(this), this);

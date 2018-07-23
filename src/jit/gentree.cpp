@@ -2983,7 +2983,16 @@ bool Compiler::gtIsLikelyRegVar(GenTree* tree)
         return false;
     }
 
-    if (varDsc->lvRefCntWtd < (BB_UNITY_WEIGHT * 3))
+    // Be pessimistic if ref counts are not yet set up.
+    //
+    // Perhaps we should be optimistic though.
+    // See notes in GitHub issue 18969.
+    if (!lvaLocalVarRefCounted())
+    {
+        return false;
+    }
+
+    if (varDsc->lvRefCntWtd() < (BB_UNITY_WEIGHT * 3))
     {
         return false;
     }
@@ -12219,7 +12228,7 @@ GenTree* Compiler::gtFoldExprCompare(GenTree* tree)
         cons->gtNext = tree->gtNext;
         cons->gtPrev = tree->gtPrev;
     }
-    if (lvaLocalVarRefCounted)
+    if (lvaLocalVarRefCounted())
     {
         lvaRecursiveDecRefCounts(tree);
     }
@@ -12660,7 +12669,7 @@ GenTree* Compiler::gtFoldExprSpecial(GenTree* tree)
                 /* Multiply by zero - return the 'zero' node, but not if side effects */
                 if (!(op->gtFlags & GTF_SIDE_EFFECT))
                 {
-                    if (lvaLocalVarRefCounted)
+                    if (lvaLocalVarRefCounted())
                     {
                         lvaRecursiveDecRefCounts(op);
                     }
@@ -12692,7 +12701,7 @@ GenTree* Compiler::gtFoldExprSpecial(GenTree* tree)
 
                 if (!(op->gtFlags & GTF_SIDE_EFFECT))
                 {
-                    if (lvaLocalVarRefCounted)
+                    if (lvaLocalVarRefCounted())
                     {
                         lvaRecursiveDecRefCounts(op);
                     }
@@ -12732,7 +12741,7 @@ GenTree* Compiler::gtFoldExprSpecial(GenTree* tree)
 
                 if (!(op->gtFlags & GTF_SIDE_EFFECT))
                 {
-                    if (lvaLocalVarRefCounted)
+                    if (lvaLocalVarRefCounted())
                     {
                         lvaRecursiveDecRefCounts(op);
                     }
@@ -12755,7 +12764,7 @@ GenTree* Compiler::gtFoldExprSpecial(GenTree* tree)
                 }
                 else if (!(op->gtFlags & GTF_SIDE_EFFECT))
                 {
-                    if (lvaLocalVarRefCounted)
+                    if (lvaLocalVarRefCounted())
                     {
                         lvaRecursiveDecRefCounts(op);
                     }
@@ -12783,7 +12792,7 @@ GenTree* Compiler::gtFoldExprSpecial(GenTree* tree)
                 op         = op2->AsColon()->ElseNode();
                 opToDelete = op2->AsColon()->ThenNode();
             }
-            if (lvaLocalVarRefCounted)
+            if (lvaLocalVarRefCounted())
             {
                 lvaRecursiveDecRefCounts(opToDelete);
             }
@@ -17510,6 +17519,17 @@ GenTreeHWIntrinsic* Compiler::gtNewScalarHWIntrinsicNode(var_types      type,
     SetOpLclRelatedToSIMDIntrinsic(op2);
 
     return new (this, GT_HWIntrinsic) GenTreeHWIntrinsic(type, op1, op2, hwIntrinsicID, TYP_UNKNOWN, 0);
+}
+
+GenTreeHWIntrinsic* Compiler::gtNewScalarHWIntrinsicNode(
+    var_types type, GenTree* op1, GenTree* op2, GenTree* op3, NamedIntrinsic hwIntrinsicID)
+{
+    SetOpLclRelatedToSIMDIntrinsic(op1);
+    SetOpLclRelatedToSIMDIntrinsic(op2);
+    SetOpLclRelatedToSIMDIntrinsic(op3);
+
+    return new (this, GT_HWIntrinsic)
+        GenTreeHWIntrinsic(type, gtNewArgList(op1, op2, op3), hwIntrinsicID, TYP_UNKNOWN, 0);
 }
 
 //---------------------------------------------------------------------------------------

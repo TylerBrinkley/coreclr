@@ -2718,7 +2718,7 @@ namespace System.Threading.Tasks
         /// <exception cref="T:System.ArgumentOutOfRangeException">
         /// <paramref name="timeout"/> is a negative number other than -1 milliseconds, which represents an
         /// infinite time-out -or- timeout is greater than
-        /// <see cref="System.int.MaxValue"/>.
+        /// <see cref="System.Int32.MaxValue"/>.
         /// </exception>
         public bool Wait(TimeSpan timeout)
         {
@@ -3013,7 +3013,7 @@ namespace System.Threading.Tasks
             var spinner = new SpinWait();
             while (spinner.Count < spinCount)
             {
-                spinner.SpinOnce(Threading.SpinWait.Sleep1ThresholdForSpinBeforeWait);
+                spinner.SpinOnce(sleep1Threshold: -1);
 
                 if (IsCompleted)
                 {
@@ -4521,7 +4521,7 @@ namespace System.Threading.Tasks
         /// <exception cref="T:System.ArgumentOutOfRangeException">
         /// <paramref name="timeout"/> is a negative number other than -1 milliseconds, which represents an
         /// infinite time-out -or- timeout is greater than
-        /// <see cref="System.int.MaxValue"/>.
+        /// <see cref="System.Int32.MaxValue"/>.
         /// </exception>
         [MethodImpl(MethodImplOptions.NoOptimization)]  // this is needed for the parallel debugger
         public static bool WaitAll(Task[] tasks, TimeSpan timeout)
@@ -4908,7 +4908,7 @@ namespace System.Threading.Tasks
         /// <exception cref="T:System.ArgumentOutOfRangeException">
         /// <paramref name="timeout"/> is a negative number other than -1 milliseconds, which represents an
         /// infinite time-out -or- timeout is greater than
-        /// <see cref="System.int.MaxValue"/>.
+        /// <see cref="System.Int32.MaxValue"/>.
         /// </exception>
         [MethodImpl(MethodImplOptions.NoOptimization)]  // this is needed for the parallel debugger
         public static int WaitAny(Task[] tasks, TimeSpan timeout)

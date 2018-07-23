@@ -180,7 +180,7 @@ unsigned LinearScan::getWeight(RefPosition* refPos)
             // ref position.
             GenTreeLclVarCommon* lclCommon = treeNode->AsLclVarCommon();
             LclVarDsc*           varDsc    = &(compiler->lvaTable[lclCommon->gtLclNum]);
-            weight                         = varDsc->lvRefCntWtd;
+            weight                         = varDsc->lvRefCntWtd();
             if (refPos->getInterval()->isSpilled)
             {
                 // Decrease the weight if the interval has already been spilled.
@@ -1390,9 +1390,9 @@ bool LinearScan::isRegCandidate(LclVarDsc* varDsc)
     }
 
     // Don't enregister if the ref count is zero.
-    if (varDsc->lvRefCnt == 0)
+    if (varDsc->lvRefCnt() == 0)
     {
-        varDsc->lvRefCntWtd = 0;
+        varDsc->setLvRefCntWtd(0);
         return false;
     }
 
@@ -1615,22 +1615,22 @@ void LinearScan::identifyCandidates()
         {
             if (varDsc->lvIsParam && !varDsc->lvIsRegArg)
             {
-                refCntStkParam += varDsc->lvRefCnt;
+                refCntStkParam += varDsc->lvRefCnt();
             }
             else if (!isRegCandidate(varDsc) || varDsc->lvDoNotEnregister)
             {
-                refCntStk += varDsc->lvRefCnt;
+                refCntStk += varDsc->lvRefCnt();
                 if ((varDsc->lvType == TYP_DOUBLE) ||
                     ((varTypeIsStruct(varDsc) && varDsc->lvStructDoubleAlign &&
                       (compiler->lvaGetPromotionType(varDsc) != Compiler::PROMOTION_TYPE_INDEPENDENT))))
                 {
-                    refCntWtdStkDbl += varDsc->lvRefCntWtd;
+                    refCntWtdStkDbl += varDsc->lvRefCntWtd();
                 }
             }
             else
             {
-                refCntReg += varDsc->lvRefCnt;
-                refCntWtdReg += varDsc->lvRefCntWtd;
+                refCntReg += varDsc->lvRefCnt();
+                refCntWtdReg += varDsc->lvRefCntWtd();
             }
         }
 #endif // DOUBLE_ALIGN
@@ -1682,7 +1682,7 @@ void LinearScan::identifyCandidates()
             {
                 largeVectorVarCount++;
                 VarSetOps::AddElemD(compiler, largeVectorVars, varDsc->lvVarIndex);
-                unsigned refCntWtd = varDsc->lvRefCntWtd;
+                unsigned refCntWtd = varDsc->lvRefCntWtd();
                 if (refCntWtd >= thresholdLargeVectorRefCntWtd)
                 {
                     VarSetOps::AddElemD(compiler, largeVectorCalleeSaveCandidateVars, varDsc->lvVarIndex);
@@ -1693,7 +1693,7 @@ void LinearScan::identifyCandidates()
                 if (regType(type) == FloatRegisterType)
             {
                 floatVarCount++;
-                unsigned refCntWtd = varDsc->lvRefCntWtd;
+                unsigned refCntWtd = varDsc->lvRefCntWtd();
                 if (varDsc->lvIsRegArg)
                 {
                     // Don't count the initial reference for register params.  In those cases,
@@ -3366,15 +3366,8 @@ bool LinearScan::isSpillCandidate(Interval*     current,
 #endif
     {
         RefPosition* nextPhysRegPosition = physRegRecord->getNextRefPosition();
-#ifdef _TARGET_ARM64_
-        // On ARM64, we may need to actually allocate IP0 and IP1 in some cases, but we don't include it in
-        // the allocation order for tryAllocateFreeReg.
-        if ((physRegRecord->regNum != REG_IP0) && (physRegRecord->regNum != REG_IP1))
-#endif // _TARGET_ARM64_
-        {
-            assert((nextPhysRegPosition != nullptr) && (nextPhysRegPosition->nodeLocation == refLocation) &&
-                   (candidateBit != refPosition->registerAssignment));
-        }
+        assert((nextPhysRegPosition != nullptr) && (nextPhysRegPosition->nodeLocation == refLocation) &&
+               (candidateBit != refPosition->registerAssignment));
         return false;
     }
 
@@ -5223,7 +5216,7 @@ void LinearScan::allocateRegisters()
                 // inserting a store.
                 LclVarDsc* varDsc = currentInterval->getLocalVar(compiler);
                 assert(varDsc != nullptr);
-                if (refType == RefTypeParamDef && varDsc->lvRefCntWtd <= BB_UNITY_WEIGHT)
+                if (refType == RefTypeParamDef && varDsc->lvRefCntWtd() <= BB_UNITY_WEIGHT)
                 {
                     INDEBUG(dumpLsraAllocationEvent(LSRA_EVENT_NO_ENTRY_REG_ALLOCATED, currentInterval));
                     didDump  = true;
@@ -6433,6 +6426,7 @@ void LinearScan::updateMaxSpill(RefPosition* refPosition)
                 {
                     typ = treeNode->AsPutArgSplit()->GetRegType(refPosition->getMultiRegIdx());
                 }
+#if !defined(_TARGET_64BIT_)
                 else if (treeNode->OperIsPutArgReg())
                 {
                     // For double arg regs, the type is changed to long since they must be passed via `r0-r3`.
@@ -6440,6 +6434,7 @@ void LinearScan::updateMaxSpill(RefPosition* refPosition)
                     var_types typNode = treeNode->TypeGet();
                     typ               = (typNode == TYP_LONG) ? TYP_INT : typNode;
                 }
+#endif // !_TARGET_64BIT_
 #endif // FEATURE_ARG_SPLIT
                 else
                 {
@@ -6920,7 +6915,7 @@ void LinearScan::resolveRegisters()
                     {
                         // Dead interval
                         varDsc->lvLRACandidate = false;
-                        if (varDsc->lvRefCnt == 0)
+                        if (varDsc->lvRefCnt() == 0)
                         {
                             varDsc->lvOnFrame = false;
                         }
@@ -9107,7 +9102,7 @@ void LinearScan::TupleStyleDump(LsraTupleDumpMode mode)
                                 printf("\n                               Use:");
                                 interval->microDump();
                                 printf("(#%d)", currentRefPosition->rpNum);
-                                if (currentRefPosition->isFixedRegRef)
+                                if (currentRefPosition->isFixedRegRef && !interval->isInternal)
                                 {
                                     assert(genMaxOneBit(currentRefPosition->registerAssignment));
                                     assert(lastFixedRegRefPos != nullptr);

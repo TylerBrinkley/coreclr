@@ -64,11 +64,17 @@ namespace JIT.HardwareIntrinsics.X86
                     test.RunLclVarScenario_LoadAligned();
                 }
 
-                // Validates passing the field of a local works
-                test.RunLclFldScenario();
+                // Validates passing the field of a local class works
+                test.RunClassLclFldScenario();
 
-                // Validates passing an instance member works
-                test.RunFldScenario();
+                // Validates passing an instance member of a class works
+                test.RunClassFldScenario();
+
+                // Validates passing the field of a local struct works
+                test.RunStructLclFldScenario();
+
+                // Validates passing an instance member of a struct works
+                test.RunStructFldScenario();
             }
             else
             {
@@ -85,6 +91,30 @@ namespace JIT.HardwareIntrinsics.X86
 
     public sealed unsafe class SimpleUnaryOpTest__AbsUInt32
     {
+        private struct TestStruct
+        {
+            public Vector128<Int32> _fld;
+
+            public static TestStruct Create()
+            {
+                var testStruct = new TestStruct();
+                var random = new Random();
+
+                for (var i = 0; i < Op1ElementCount; i++) { _data[i] = (int)(random.Next(int.MinValue + 1, int.MaxValue)); }
+                Unsafe.CopyBlockUnaligned(ref Unsafe.As<Vector128<Int32>, byte>(ref testStruct._fld), ref Unsafe.As<Int32, byte>(ref _data[0]), (uint)Unsafe.SizeOf<Vector128<Int32>>());
+
+                return testStruct;
+            }
+
+            public void RunStructFldScenario(SimpleUnaryOpTest__AbsUInt32 testClass)
+            {
+                var result = Ssse3.Abs(_fld);
+
+                Unsafe.Write(testClass._dataTable.outArrayPtr, result);
+                testClass.ValidateResult(_fld, testClass._dataTable.outArrayPtr);
+            }
+        }
+
         private static readonly int LargestVectorSize = 16;
 
         private static readonly int Op1ElementCount = Unsafe.SizeOf<Vector128<Int32>>() / sizeof(Int32);
@@ -223,7 +253,7 @@ namespace JIT.HardwareIntrinsics.X86
             ValidateResult(firstOp, _dataTable.outArrayPtr);
         }
 
-        public void RunLclFldScenario()
+        public void RunClassLclFldScenario()
         {
             var test = new SimpleUnaryOpTest__AbsUInt32();
             var result = Ssse3.Abs(test._fld);
@@ -232,12 +262,27 @@ namespace JIT.HardwareIntrinsics.X86
             ValidateResult(test._fld, _dataTable.outArrayPtr);
         }
 
-        public void RunFldScenario()
+        public void RunClassFldScenario()
         {
             var result = Ssse3.Abs(_fld);
 
             Unsafe.Write(_dataTable.outArrayPtr, result);
             ValidateResult(_fld, _dataTable.outArrayPtr);
+        }
+
+        public void RunStructLclFldScenario()
+        {
+            var test = TestStruct.Create();
+            var result = Ssse3.Abs(test._fld);
+
+            Unsafe.Write(_dataTable.outArrayPtr, result);
+            ValidateResult(test._fld, _dataTable.outArrayPtr);
+        }
+
+        public void RunStructFldScenario()
+        {
+            var test = TestStruct.Create();
+            test.RunStructFldScenario(this);
         }
 
         public void RunUnsupportedScenario()
@@ -296,10 +341,10 @@ namespace JIT.HardwareIntrinsics.X86
 
             if (!Succeeded)
             {
-                Console.WriteLine($"{nameof(Ssse3)}.{nameof(Ssse3.Abs)}<UInt32>(Vector128<Int32>): {method} failed:");
-                Console.WriteLine($"  firstOp: ({string.Join(", ", firstOp)})");
-                Console.WriteLine($"   result: ({string.Join(", ", result)})");
-                Console.WriteLine();
+                TestLibrary.TestFramework.LogInformation($"{nameof(Ssse3)}.{nameof(Ssse3.Abs)}<UInt32>(Vector128<Int32>): {method} failed:");
+                TestLibrary.TestFramework.LogInformation($"  firstOp: ({string.Join(", ", firstOp)})");
+                TestLibrary.TestFramework.LogInformation($"   result: ({string.Join(", ", result)})");
+                TestLibrary.TestFramework.LogInformation(string.Empty);
             }
         }
     }

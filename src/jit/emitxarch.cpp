@@ -50,6 +50,38 @@ bool IsFMAInstruction(instruction ins)
     return (ins >= INS_FIRST_FMA_INSTRUCTION) && (ins <= INS_LAST_FMA_INSTRUCTION);
 }
 
+bool IsBMIInstruction(instruction ins)
+{
+    return (ins >= INS_FIRST_BMI_INSTRUCTION) && (ins <= INS_LAST_BMI_INSTRUCTION);
+}
+
+regNumber getBmiRegNumber(instruction ins)
+{
+    switch (ins)
+    {
+        case INS_blsi:
+        {
+            return (regNumber)3;
+        }
+
+        case INS_blsmsk:
+        {
+            return (regNumber)2;
+        }
+
+        case INS_blsr:
+        {
+            return (regNumber)1;
+        }
+
+        default:
+        {
+            assert(IsBMIInstruction(ins));
+            return REG_NA;
+        }
+    }
+}
+
 regNumber getSseShiftRegNumber(instruction ins)
 {
     switch (ins)
@@ -113,12 +145,16 @@ bool emitter::IsDstDstSrcAVXInstruction(instruction ins)
         case INS_addss:
         case INS_addsubpd:
         case INS_addsubps:
+        case INS_andn:
         case INS_andnpd:
         case INS_andnps:
         case INS_andpd:
         case INS_andps:
         case INS_blendpd:
         case INS_blendps:
+        case INS_blsi:
+        case INS_blsmsk:
+        case INS_blsr:
         case INS_cmppd:
         case INS_cmpps:
         case INS_cmpsd:
@@ -181,6 +217,8 @@ bool emitter::IsDstDstSrcAVXInstruction(instruction ins)
         case INS_pcmpgtd:
         case INS_pcmpgtq:
         case INS_pcmpgtw:
+        case INS_pdep:
+        case INS_pext:
         case INS_phaddd:
         case INS_phaddsw:
         case INS_phaddw:
@@ -255,6 +293,9 @@ bool emitter::IsDstDstSrcAVXInstruction(instruction ins)
         case INS_unpcklps:
         case INS_unpckhpd:
         case INS_unpcklpd:
+        case INS_vblendvps:
+        case INS_vblendvpd:
+        case INS_vpblendvb:
         case INS_vfmadd132pd:
         case INS_vfmadd213pd:
         case INS_vfmadd231pd:
@@ -319,6 +360,7 @@ bool emitter::IsDstDstSrcAVXInstruction(instruction ins)
         case INS_vinserti128:
         case INS_vmaskmovps:
         case INS_vmaskmovpd:
+        case INS_vpblendd:
         case INS_vperm2i128:
         case INS_vperm2f128:
         case INS_vpermilpsvar:
@@ -571,6 +613,10 @@ bool TakesRexWPrefix(instruction ins, emitAttr attr)
     {
         switch (ins)
         {
+            case INS_andn:
+            case INS_blsi:
+            case INS_blsmsk:
+            case INS_blsr:
             case INS_cvttsd2si:
             case INS_cvttss2si:
             case INS_cvtsd2si:
@@ -580,6 +626,8 @@ bool TakesRexWPrefix(instruction ins, emitAttr attr)
             case INS_mov_xmm2i:
             case INS_mov_i2xmm:
             case INS_movnti:
+            case INS_pdep:
+            case INS_pext:
                 return true;
             default:
                 return false;
@@ -799,7 +847,7 @@ unsigned emitter::emitOutputRexOrVexPrefixIfNeeded(instruction ins, BYTE* dst, c
             // 4-byte opcode: with the bytes ordered as 0x22114433
             // check for a prefix in the 11 position
             BYTE sizePrefix = (code >> 16) & 0xFF;
-            if (sizePrefix != 0 && isPrefix(sizePrefix))
+            if ((sizePrefix != 0) && isPrefix(sizePrefix))
             {
                 // 'pp' bits in byte2 of VEX prefix allows us to encode SIMD size prefixes as two bits
                 //
@@ -810,7 +858,33 @@ unsigned emitter::emitOutputRexOrVexPrefixIfNeeded(instruction ins, BYTE* dst, c
                 switch (sizePrefix)
                 {
                     case 0x66:
-                        vexPrefix |= 0x01;
+                        if (IsBMIInstruction(ins))
+                        {
+                            switch (ins)
+                            {
+                                case INS_pdep:
+                                {
+                                    vexPrefix |= 0x03;
+                                    break;
+                                }
+
+                                case INS_pext:
+                                {
+                                    vexPrefix |= 0x02;
+                                    break;
+                                }
+
+                                default:
+                                {
+                                    vexPrefix |= 0x00;
+                                    break;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            vexPrefix |= 0x01;
+                        }
                         break;
                     case 0xF3:
                         vexPrefix |= 0x02;
@@ -4236,8 +4310,7 @@ void emitter::emitIns_R_R_C(
         attr = EA_SET_FLG(attr, EA_DSP_RELOC_FLG);
     }
 
-    instrDesc*     id = emitNewInstrDsp(attr, offs);
-    UNATIVE_OFFSET sz = emitInsSizeCV(id, insCodeRM(ins));
+    instrDesc* id = emitNewInstrDsp(attr, offs);
 
     id->idIns(ins);
     id->idInsFmt(IF_RWR_RRD_MRD);
@@ -4245,6 +4318,7 @@ void emitter::emitIns_R_R_C(
     id->idReg2(reg2);
     id->idAddr()->iiaFieldHnd = fldHnd;
 
+    UNATIVE_OFFSET sz = emitInsSizeCV(id, insCodeRM(ins));
     id->idCodeSize(sz);
 
     dispIns(id);
@@ -4442,10 +4516,13 @@ void emitter::emitIns_R_R_S_I(
 //    opReg encoded in imm[7:4]
 static int encodeXmmRegAsIval(regNumber opReg)
 {
-    assert(opReg >= XMMBASE);
     // AVX/AVX2 supports 4-reg format for vblendvps/vblendvpd/vpblendvb,
     // which encodes the fourth register into imm8[7:4]
-    return (opReg - XMMBASE) << 4;
+    assert(opReg >= XMMBASE);
+    int ival = (opReg - XMMBASE) << 4;
+
+    assert((ival >= 0) && (ival <= 255));
+    return (int8_t)ival;
 }
 
 //------------------------------------------------------------------------
@@ -8304,8 +8381,8 @@ void emitter::emitDispIns(
                 // Munge any pointers if we want diff-able disassembly
                 if (emitComp->opts.disDiffable)
                 {
-                    ssize_t top12bits = (val >> 20);
-                    if ((top12bits != 0) && (top12bits != -1))
+                    ssize_t top14bits = (val >> 18);
+                    if ((top14bits != 0) && (top14bits != -1))
                     {
                         val = 0xD1FFAB1E;
                     }
@@ -9309,7 +9386,8 @@ BYTE* emitter::emitOutputAM(BYTE* dst, instrDesc* id, code_t code, CnsVal* addc)
         {
             regNumber src1 = id->idReg2();
 
-            if ((id->idInsFmt() != IF_RWR_RRD_ARD) && (id->idInsFmt() != IF_RWR_RRD_ARD_CNS))
+            if ((id->idInsFmt() != IF_RWR_RRD_ARD) && (id->idInsFmt() != IF_RWR_RRD_ARD_CNS) &&
+                (id->idInsFmt() != IF_RWR_RRD_ARD_RRD))
             {
                 src1 = id->idReg1();
             }
@@ -9356,7 +9434,17 @@ BYTE* emitter::emitOutputAM(BYTE* dst, instrDesc* id, code_t code, CnsVal* addc)
             }
         }
 
-        unsigned regcode = insEncodeReg345(ins, id->idReg1(), size, &code);
+        regNumber reg345 = REG_NA;
+        if (IsBMIInstruction(ins))
+        {
+            reg345 = getBmiRegNumber(ins);
+        }
+        if (reg345 == REG_NA)
+        {
+            reg345 = id->idReg1();
+        }
+        unsigned regcode = insEncodeReg345(ins, reg345, size, &code);
+
         dst += emitOutputRexOrVexPrefixIfNeeded(ins, dst, code);
 
         if (UseVEXEncoding() && (ins != INS_crc32))
@@ -10098,7 +10186,21 @@ BYTE* emitter::emitOutputSV(BYTE* dst, instrDesc* id, code_t code, CnsVal* addc)
             }
         }
 
-        unsigned regcode = insEncodeReg345(ins, id->idReg1(), size, &code);
+        regNumber reg345 = REG_NA;
+        if (IsBMIInstruction(ins))
+        {
+            reg345 = getBmiRegNumber(ins);
+        }
+        if (reg345 == REG_NA)
+        {
+            reg345 = id->idReg1();
+        }
+        else
+        {
+            code = insEncodeReg3456(ins, id->idReg1(), size, code);
+        }
+        unsigned regcode = insEncodeReg345(ins, reg345, size, &code);
+
         dst += emitOutputRexOrVexPrefixIfNeeded(ins, dst, code);
 
         if (UseVEXEncoding() && (ins != INS_crc32))
@@ -10548,7 +10650,21 @@ BYTE* emitter::emitOutputCV(BYTE* dst, instrDesc* id, code_t code, CnsVal* addc)
             }
         }
 
-        unsigned regcode = insEncodeReg345(ins, id->idReg1(), size, &code);
+        regNumber reg345 = REG_NA;
+        if (IsBMIInstruction(ins))
+        {
+            reg345 = getBmiRegNumber(ins);
+        }
+        if (reg345 == REG_NA)
+        {
+            reg345 = id->idReg1();
+        }
+        else
+        {
+            code = insEncodeReg3456(ins, id->idReg1(), size, code);
+        }
+        unsigned regcode = insEncodeReg345(ins, reg345, size, &code);
+
         dst += emitOutputRexOrVexPrefixIfNeeded(ins, dst, code);
 
         if (UseVEXEncoding() && (ins != INS_crc32))
@@ -11136,7 +11252,7 @@ BYTE* emitter::emitOutputRR(BYTE* dst, instrDesc* id)
 #endif // _TARGET_AMD64_
     }
 #ifdef FEATURE_HW_INTRINSICS
-    else if ((ins == INS_crc32) || (ins == INS_lzcnt) || (ins == INS_popcnt))
+    else if ((ins == INS_crc32) || (ins == INS_lzcnt) || (ins == INS_popcnt) || (ins == INS_tzcnt))
     {
         code = insEncodeRMreg(ins, code);
         if ((ins == INS_crc32) && (size > EA_1BYTE))
@@ -11201,7 +11317,16 @@ BYTE* emitter::emitOutputRR(BYTE* dst, instrDesc* id)
         }
     }
 
-    unsigned regCode = insEncodeReg345(ins, reg1, size, &code);
+    regNumber reg345 = REG_NA;
+    if (IsBMIInstruction(ins))
+    {
+        reg345 = getBmiRegNumber(ins);
+    }
+    if (reg345 == REG_NA)
+    {
+        reg345 = id->idReg1();
+    }
+    unsigned regCode = insEncodeReg345(ins, reg345, size, &code);
     regCode |= insEncodeReg012(ins, reg2, size, &code);
 
     if (TakesVexPrefix(ins))

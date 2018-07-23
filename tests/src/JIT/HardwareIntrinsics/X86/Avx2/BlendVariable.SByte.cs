@@ -64,11 +64,17 @@ namespace JIT.HardwareIntrinsics.X86
                     test.RunLclVarScenario_LoadAligned();
                 }
 
-                // Validates passing the field of a local works
-                test.RunLclFldScenario();
+                // Validates passing the field of a local class works
+                test.RunClassLclFldScenario();
 
-                // Validates passing an instance member works
-                test.RunFldScenario();
+                // Validates passing an instance member of a class works
+                test.RunClassFldScenario();
+
+                // Validates passing the field of a local struct works
+                test.RunStructLclFldScenario();
+
+                // Validates passing an instance member of a struct works
+                test.RunStructFldScenario();
             }
             else
             {
@@ -85,6 +91,36 @@ namespace JIT.HardwareIntrinsics.X86
 
     public sealed unsafe class SimpleTernaryOpTest__BlendVariableSByte
     {
+        private struct TestStruct
+        {
+            public Vector256<SByte> _fld1;
+            public Vector256<SByte> _fld2;
+            public Vector256<SByte> _fld3;
+
+            public static TestStruct Create()
+            {
+                var testStruct = new TestStruct();
+                var random = new Random();
+
+                for (var i = 0; i < Op1ElementCount; i++) { _data1[i] = (sbyte)(random.Next(sbyte.MinValue, sbyte.MaxValue)); }
+                Unsafe.CopyBlockUnaligned(ref Unsafe.As<Vector256<SByte>, byte>(ref testStruct._fld1), ref Unsafe.As<SByte, byte>(ref _data1[0]), (uint)Unsafe.SizeOf<Vector256<SByte>>());
+                for (var i = 0; i < Op2ElementCount; i++) { _data2[i] = (sbyte)(random.Next(sbyte.MinValue, sbyte.MaxValue)); }
+                Unsafe.CopyBlockUnaligned(ref Unsafe.As<Vector256<SByte>, byte>(ref testStruct._fld2), ref Unsafe.As<SByte, byte>(ref _data2[0]), (uint)Unsafe.SizeOf<Vector256<SByte>>());
+                for (var i = 0; i < Op3ElementCount; i++) { _data3[i] = (sbyte)(((i % 2) == 0) ? -128 : 1); }
+                Unsafe.CopyBlockUnaligned(ref Unsafe.As<Vector256<SByte>, byte>(ref _clsVar3), ref Unsafe.As<SByte, byte>(ref _data3[0]), (uint)Unsafe.SizeOf<Vector256<SByte>>());
+
+                return testStruct;
+            }
+
+            public void RunStructFldScenario(SimpleTernaryOpTest__BlendVariableSByte testClass)
+            {
+                var result = Avx2.BlendVariable(_fld1, _fld2, _fld3);
+
+                Unsafe.Write(testClass._dataTable.outArrayPtr, result);
+                testClass.ValidateResult(_fld1, _fld2, _fld3, testClass._dataTable.outArrayPtr);
+            }
+        }
+
         private static readonly int LargestVectorSize = 32;
 
         private static readonly int Op1ElementCount = Unsafe.SizeOf<Vector256<SByte>>() / sizeof(SByte);
@@ -261,7 +297,7 @@ namespace JIT.HardwareIntrinsics.X86
             ValidateResult(firstOp, secondOp, thirdOp, _dataTable.outArrayPtr);
         }
 
-        public void RunLclFldScenario()
+        public void RunClassLclFldScenario()
         {
             var test = new SimpleTernaryOpTest__BlendVariableSByte();
             var result = Avx2.BlendVariable(test._fld1, test._fld2, test._fld3);
@@ -270,12 +306,27 @@ namespace JIT.HardwareIntrinsics.X86
             ValidateResult(test._fld1, test._fld2, test._fld3, _dataTable.outArrayPtr);
         }
 
-        public void RunFldScenario()
+        public void RunClassFldScenario()
         {
             var result = Avx2.BlendVariable(_fld1, _fld2, _fld3);
 
             Unsafe.Write(_dataTable.outArrayPtr, result);
             ValidateResult(_fld1, _fld2, _fld3, _dataTable.outArrayPtr);
+        }
+
+        public void RunStructLclFldScenario()
+        {
+            var test = TestStruct.Create();
+            var result = Avx2.BlendVariable(test._fld1, test._fld2, test._fld3);
+
+            Unsafe.Write(_dataTable.outArrayPtr, result);
+            ValidateResult(test._fld1, test._fld2, test._fld3, _dataTable.outArrayPtr);
+        }
+
+        public void RunStructFldScenario()
+        {
+            var test = TestStruct.Create();
+            test.RunStructFldScenario(this);
         }
 
         public void RunUnsupportedScenario()
@@ -342,12 +393,12 @@ namespace JIT.HardwareIntrinsics.X86
 
             if (!Succeeded)
             {
-                Console.WriteLine($"{nameof(Avx2)}.{nameof(Avx2.BlendVariable)}<SByte>(Vector256<SByte>, Vector256<SByte>, Vector256<SByte>): {method} failed:");
-                Console.WriteLine($"   firstOp: ({string.Join(", ", firstOp)})");
-                Console.WriteLine($"  secondOp: ({string.Join(", ", secondOp)})");
-                Console.WriteLine($"   thirdOp: ({string.Join(", ", thirdOp)})");
-                Console.WriteLine($"    result: ({string.Join(", ", result)})");
-                Console.WriteLine();
+                TestLibrary.TestFramework.LogInformation($"{nameof(Avx2)}.{nameof(Avx2.BlendVariable)}<SByte>(Vector256<SByte>, Vector256<SByte>, Vector256<SByte>): {method} failed:");
+                TestLibrary.TestFramework.LogInformation($"   firstOp: ({string.Join(", ", firstOp)})");
+                TestLibrary.TestFramework.LogInformation($"  secondOp: ({string.Join(", ", secondOp)})");
+                TestLibrary.TestFramework.LogInformation($"   thirdOp: ({string.Join(", ", thirdOp)})");
+                TestLibrary.TestFramework.LogInformation($"    result: ({string.Join(", ", result)})");
+                TestLibrary.TestFramework.LogInformation(string.Empty);
             }
         }
     }

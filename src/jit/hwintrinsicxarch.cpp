@@ -379,8 +379,6 @@ bool HWIntrinsicInfo::isFullyImplementedIsa(InstructionSet isa)
     {
         // These ISAs have no implementation
         case InstructionSet_AES:
-        case InstructionSet_BMI1:
-        case InstructionSet_BMI2:
         case InstructionSet_PCLMULQDQ:
         {
             return false;
@@ -389,6 +387,8 @@ bool HWIntrinsicInfo::isFullyImplementedIsa(InstructionSet isa)
         // These ISAs are partially implemented
         case InstructionSet_AVX:
         case InstructionSet_AVX2:
+        case InstructionSet_BMI1:
+        case InstructionSet_BMI2:
         case InstructionSet_SSE42:
         {
             return true;
@@ -1287,7 +1287,36 @@ GenTree* Compiler::impBMI1Intrinsic(NamedIntrinsic        intrinsic,
                                     CORINFO_SIG_INFO*     sig,
                                     bool                  mustExpand)
 {
-    return nullptr;
+    var_types callType = JITtype2varType(sig->retType);
+
+    switch (intrinsic)
+    {
+        case NI_BMI1_AndNot:
+        {
+            assert(sig->numArgs == 2);
+
+            GenTree* op2 = impPopStack().val;
+            GenTree* op1 = impPopStack().val;
+
+            return gtNewScalarHWIntrinsicNode(callType, op1, op2, intrinsic);
+        }
+
+        case NI_BMI1_ExtractLowestSetBit:
+        case NI_BMI1_GetMaskUpToLowestSetBit:
+        case NI_BMI1_ResetLowestSetBit:
+        case NI_BMI1_TrailingZeroCount:
+        {
+            assert(sig->numArgs == 1);
+            GenTree* op1 = impPopStack().val;
+            return gtNewScalarHWIntrinsicNode(callType, op1, intrinsic);
+        }
+
+        default:
+        {
+            unreached();
+            return nullptr;
+        }
+    }
 }
 
 GenTree* Compiler::impBMI2Intrinsic(NamedIntrinsic        intrinsic,
@@ -1295,7 +1324,27 @@ GenTree* Compiler::impBMI2Intrinsic(NamedIntrinsic        intrinsic,
                                     CORINFO_SIG_INFO*     sig,
                                     bool                  mustExpand)
 {
-    return nullptr;
+    var_types callType = JITtype2varType(sig->retType);
+
+    switch (intrinsic)
+    {
+        case NI_BMI2_ParallelBitDeposit:
+        case NI_BMI2_ParallelBitExtract:
+        {
+            assert(sig->numArgs == 2);
+
+            GenTree* op2 = impPopStack().val;
+            GenTree* op1 = impPopStack().val;
+
+            return gtNewScalarHWIntrinsicNode(callType, op1, op2, intrinsic);
+        }
+
+        default:
+        {
+            unreached();
+            return nullptr;
+        }
+    }
 }
 
 GenTree* Compiler::impFMAIntrinsic(NamedIntrinsic        intrinsic,
