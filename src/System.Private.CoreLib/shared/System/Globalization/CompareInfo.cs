@@ -1293,7 +1293,7 @@ namespace System.Globalization
             // Do not allocate on the stack if string is empty
             if (source.Length == 0)
             {
-                return source.GetHashCode();
+                return string.Empty.GetHashCode();
             }
 
             char[] borrowedArr = null;

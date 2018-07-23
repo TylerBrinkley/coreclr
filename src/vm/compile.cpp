@@ -5133,26 +5133,14 @@ static void SpecializeComparer(SString& ss, Instantiation& inst)
         CorElementType et = elemTypeHnd.GetVerifierCorElementType();
         if (et == ELEMENT_TYPE_I1 ||
             et == ELEMENT_TYPE_I2 ||
-            et == ELEMENT_TYPE_I4)
-        {
-            ss.Set(W("System.Collections.Generic.Int32EnumComparer`1"));
-            return;
-        }
-        if (et == ELEMENT_TYPE_U1 ||
+            et == ELEMENT_TYPE_I4 ||
+            et == ELEMENT_TYPE_U1 ||
             et == ELEMENT_TYPE_U2 ||
-            et == ELEMENT_TYPE_U4)
+            et == ELEMENT_TYPE_U4 ||
+            et == ELEMENT_TYPE_I8 ||
+            et == ELEMENT_TYPE_U8)
         {
-            ss.Set(W("System.Collections.Generic.UInt32EnumComparer`1"));
-            return;
-        }
-        if (et == ELEMENT_TYPE_I8)
-        {
-            ss.Set(W("System.Collections.Generic.Int64EnumComparer`1"));
-            return;
-        }
-        if (et == ELEMENT_TYPE_U8)
-        {
-            ss.Set(W("System.Collections.Generic.UInt64EnumComparer`1"));
+            ss.Set(W("System.Collections.Generic.EnumComparer`1"));
             return;
         }
     }
@@ -5200,7 +5188,9 @@ static void SpecializeEqualityComparer(SString& ss, Instantiation& inst)
         // Note: We have different comparers for Short and SByte because for those types we need to make sure we call GetHashCode on the actual underlying type as the 
         // implementation of GetHashCode is more complex than for the other types.
         CorElementType et = elemTypeHnd.GetVerifierCorElementType();
-        if (et == ELEMENT_TYPE_I4 ||
+        if (et == ELEMENT_TYPE_I8 ||
+            et == ELEMENT_TYPE_U8 ||
+            et == ELEMENT_TYPE_I4 ||
             et == ELEMENT_TYPE_U4 ||
             et == ELEMENT_TYPE_U2 ||
             et == ELEMENT_TYPE_I2 ||
@@ -5208,12 +5198,6 @@ static void SpecializeEqualityComparer(SString& ss, Instantiation& inst)
             et == ELEMENT_TYPE_I1)
         {
             ss.Set(W("System.Collections.Generic.EnumEqualityComparer`1"));
-            return;
-        }
-        else if (et == ELEMENT_TYPE_I8 ||
-                 et == ELEMENT_TYPE_U8)
-        {
-            ss.Set(W("System.Collections.Generic.LongEnumEqualityComparer`1"));
             return;
         }
     }
