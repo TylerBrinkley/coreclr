@@ -57,7 +57,7 @@ namespace System
             return GetBridge(rtType);
         }
 
-        private static IEnumBridge GetBridge(RuntimeType rtType)
+        internal static IEnumBridge GetBridge(RuntimeType rtType)
         {
             if (!(rtType.GenericCache is IEnumBridge bridge))
             {
@@ -365,20 +365,12 @@ namespace System
 
             public IEnumerable<TEnum> GetValues()
             {
-                int dupeIndex = 0;
-                List<EnumCache<TUnderlying, TUnderlyingOperators>.EnumMemberInternal> duplicateValues = s_cache._duplicateValues;
-                TUnderlying nextDupeValue = duplicateValues != null ? duplicateValues[dupeIndex].Value : default;
-                foreach (KeyValuePair<TUnderlying, EnumCache<TUnderlying, TUnderlyingOperators>.EnumMemberInternal> pair in s_cache._valueMap)
+                foreach (KeyValuePair<TUnderlying, List<EnumCache<TUnderlying, TUnderlyingOperators>.EnumMemberInternal>> pair in s_cache._valueMap)
                 {
-                    yield return ToEnum(pair.Key);
-                    while (dupeIndex < duplicateValues?.Count && nextDupeValue.Equals(pair.Key))
+                    TEnum value = ToEnum(pair.Key);
+                    for (int i = 0; i < pair.Value.Count; ++i)
                     {
-                        yield return ToEnum(nextDupeValue);
-                        ++dupeIndex;
-                        if (dupeIndex < duplicateValues.Count)
-                        {
-                            nextDupeValue = duplicateValues[dupeIndex].Value;
-                        }
+                        yield return value;
                     }
                 }
             }
@@ -454,7 +446,7 @@ namespace System
 
             public TEnum RemoveFlags(TEnum value, TEnum flags) => ToEnum(s_operators.And(ToUnderlying(value), s_operators.Not(ToUnderlying(flags))));
 
-            public int Count => s_cache._valueMap.Count + (s_cache._duplicateValues?.Count ?? 0);
+            public int Count => s_cache.Count;
 
             #region IEnumBridge
             private static TEnum ToEnum(object value)
@@ -601,9 +593,7 @@ namespace System
 
             private readonly TUnderlying _minDefined;
 
-            internal readonly Dictionary<TUnderlying, EnumMemberInternal> _valueMap;
-
-            internal readonly List<EnumMemberInternal> _duplicateValues; // is null when there are no duplicate values
+            internal readonly Dictionary<TUnderlying, List<EnumMemberInternal>> _valueMap;
 
             private Dictionary<int, List<EnumMemberInternal>> _nameMap;
 
@@ -615,36 +605,45 @@ namespace System
                     if (nameMap == null)
                     {
                         nameMap = new Dictionary<int, List<EnumMemberInternal>>(Count);
-                        foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in _valueMap)
+                        foreach (KeyValuePair<TUnderlying, List<EnumMemberInternal>> pair in _valueMap)
                         {
-                            int hash = CompareInfo.GetIgnoreCaseHash(pair.Value.Name);
-                            if (!nameMap.TryGetValue(hash, out List<EnumMemberInternal> list))
-                            {
-                                list = new List<EnumMemberInternal>();
-                                nameMap.Add(hash, list);
-                            }
-                            list.Add(pair.Value);
+                            AddToNameMap(pair.Value[0]);
                         }
-                        if (_duplicateValues != null)
+                        if (Count != _valueMap.Count)
                         {
-                            foreach (EnumMemberInternal duplicateValue in _duplicateValues)
+                            foreach (KeyValuePair<TUnderlying, List<EnumMemberInternal>> pair in _valueMap)
                             {
-                                int hash = CompareInfo.GetIgnoreCaseHash(duplicateValue.Name);
-                                if (!nameMap.TryGetValue(hash, out List<EnumMemberInternal> list))
+                                for (int i = 1; i < pair.Value.Count; ++i)
                                 {
-                                    list = new List<EnumMemberInternal>();
-                                    nameMap.Add(hash, list);
+                                    AddToNameMap(pair.Value[i]);
                                 }
-                                list.Add(duplicateValue);
                             }
                         }
+
+                        nameMap.TrimExcess();
+                        foreach (KeyValuePair<int, List<EnumMemberInternal>> pair in nameMap)
+                        {
+                            pair.Value.TrimExcess();
+                        }
+
                         _nameMap = nameMap;
                     }
                     return nameMap;
+
+                    void AddToNameMap(EnumMemberInternal member)
+                    {
+                        int hash = CompareInfo.GetIgnoreCaseHash(member.Name);
+                        if (!nameMap.TryGetValue(hash, out List<EnumMemberInternal> list))
+                        {
+                            list = new List<EnumMemberInternal>();
+                            nameMap.Add(hash, list);
+                        }
+                        list.Add(member);
+                    }
                 }
             }
 
-            public int Count => _valueMap.Count + (_duplicateValues?.Count ?? 0);
+            public int Count { get; }
 
             public EnumCache(Type enumType)
             {
@@ -652,44 +651,43 @@ namespace System
                 _isFlagEnum = enumType.IsDefined(typeof(FlagsAttribute), false);
 
                 FieldInfo[] fields = enumType.GetFields(BindingFlags.Public | BindingFlags.Static);
-                _valueMap = new Dictionary<TUnderlying, EnumMemberInternal>(fields.Length);
+                _valueMap = new Dictionary<TUnderlying, List<EnumMemberInternal>>(fields.Length);
                 if (fields.Length == 0)
                 {
                     return;
                 }
-                List<EnumMemberInternal> duplicateValues = new List<EnumMemberInternal>();
+                Count = fields.Length;
 
                 foreach (FieldInfo field in fields)
                 {
-                    string name = field.Name;
                     TUnderlying value = (TUnderlying)field.GetRawConstantValue();
-                    EnumMemberInternal member = new EnumMemberInternal(value, name);
-                    if (_valueMap.TryGetValue(value, out EnumMemberInternal existing))
+                    EnumMemberInternal member = new EnumMemberInternal(value, field.Name);
+                    if (!_valueMap.TryGetValue(value, out List<EnumMemberInternal> list))
                     {
-                        if (field.GetCustomAttribute<PrimaryAttribute>(false) != null)
-                        {
-                            _valueMap[value] = member;
-                            member = existing;
-                        }
-                        duplicateValues.Add(member);
-                    }
-                    else
-                    {
-                        _valueMap.Add(value, member);
+                        list = new List<EnumMemberInternal> { member };
+                        _valueMap.Add(value, list);
                         // Is Power of Two
                         if (s_operators.And(value, s_operators.Subtract(value, s_operators.One)).Equals(s_operators.Zero))
                         {
                             _allFlags = s_operators.Or(_allFlags, value);
                         }
                     }
+                    else if (field.GetCustomAttribute<PrimaryAttribute>(false) != null)
+                    {
+                        list.Insert(0, member);
+                    }
+                    else
+                    {
+                        list.Add(member);
+                    }
                 }
 
                 bool isInOrder = true;
                 EnumMemberInternal previous = default;
                 bool isFirst = true;
-                foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in _valueMap)
+                foreach (KeyValuePair<TUnderlying, List<EnumMemberInternal>> pair in _valueMap)
                 {
-                    EnumMemberInternal current = pair.Value;
+                    EnumMemberInternal current = pair.Value[0];
                     if (isFirst)
                     {
                         _minDefined = current.Value;
@@ -709,11 +707,11 @@ namespace System
                 else
                 {
                     // Makes sure is in increasing value order, due to no removals
-                    List<KeyValuePair<TUnderlying, EnumMemberInternal>> values = new List<KeyValuePair<TUnderlying, EnumMemberInternal>>(_valueMap);
-                    values.Sort((x, y) => x.Value.CompareTo(y.Value));
-                    _valueMap = new Dictionary<TUnderlying, EnumMemberInternal>(_valueMap.Count);
+                    List<KeyValuePair<TUnderlying, List<EnumMemberInternal>>> values = new List<KeyValuePair<TUnderlying, List<EnumMemberInternal>>>(_valueMap);
+                    values.Sort((x, y) => x.Value[0].CompareTo(y.Value[0]));
+                    _valueMap = new Dictionary<TUnderlying, List<EnumMemberInternal>>(_valueMap.Count);
 
-                    foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in values)
+                    foreach (KeyValuePair<TUnderlying, List<EnumMemberInternal>> pair in values)
                     {
                         _valueMap.Add(pair.Key, pair.Value);
                     }
@@ -724,30 +722,20 @@ namespace System
 
                 _isContiguous = s_operators.Subtract(_maxDefined, s_operators.ToObject((ulong)(_valueMap.Count - 1))).Equals(_minDefined);
 
-                if (duplicateValues.Count > 0)
+                _valueMap.TrimExcess();
+                foreach (KeyValuePair<TUnderlying, List<EnumMemberInternal>> pair in _valueMap)
                 {
-                    duplicateValues.Capacity = duplicateValues.Count;
-                    // Makes sure is in increasing value order
-                    duplicateValues.Sort((x, y) => x.CompareTo(y));
-                    _duplicateValues = duplicateValues;
+                    pair.Value.TrimExcess();
                 }
             }
 
             public IEnumerable<string> GetNames()
             {
-                int dupeIndex = 0;
-                EnumMemberInternal nextDupeMember = _duplicateValues != null ? _duplicateValues[dupeIndex] : default;
-                foreach (KeyValuePair<TUnderlying, EnumMemberInternal> pair in _valueMap)
+                foreach (KeyValuePair<TUnderlying, List<EnumMemberInternal>> pair in _valueMap)
                 {
-                    yield return pair.Value.Name;
-                    while (dupeIndex < _duplicateValues?.Count && nextDupeMember.CompareTo(pair.Value) == 0)
+                    foreach (EnumMemberInternal member in pair.Value)
                     {
-                        yield return nextDupeMember.Name;
-                        ++dupeIndex;
-                        if (dupeIndex < _duplicateValues.Count)
-                        {
-                            nextDupeMember = _duplicateValues[dupeIndex];
-                        }
+                        yield return member.Name;
                     }
                 }
             }
@@ -810,7 +798,7 @@ namespace System
                 return result;
             }
 
-            public string GetName(TUnderlying value) => _valueMap.TryGetValue(value, out EnumMemberInternal member) ? member.Name : null;
+            public string GetName(TUnderlying value) => _valueMap.TryGetValue(value, out List<EnumMemberInternal> list) ? list[0].Name : null;
 
             public string GetName(object value)
             {
@@ -848,33 +836,33 @@ namespace System
                         return false;
                     case null:
                         throw new ArgumentNullException(nameof(value));
-                }
-                
-                Type valueType = value.GetType();
-                
-                // Check if is another type of enum as checking for the current enum type is handled in EnumBridge
-                if (valueType.IsEnum)
-                {
-                    throw new ArgumentException(SR.Format(SR.Arg_EnumAndObjectMustBeSameType, valueType.ToString(), _enumType.ToString()));
-                }
-
-                TypeCode typeCode = Convert.GetTypeCode(value);
-
-                switch (typeCode)
-                {
-                    case TypeCode.SByte:
-                    case TypeCode.Byte:
-                    case TypeCode.Int16:
-                    case TypeCode.UInt16:
-                    case TypeCode.Int32:
-                    case TypeCode.UInt32:
-                    case TypeCode.Int64:
-                    case TypeCode.UInt64:
-                    case TypeCode.Boolean:
-                    case TypeCode.Char:
-                        throw new ArgumentException(SR.Format(SR.Arg_EnumUnderlyingTypeAndObjectMustBeSameType, valueType.ToString(), typeof(TUnderlying).ToString()));
                     default:
-                        throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
+                        Type valueType = value.GetType();
+
+                        // Check if is another type of enum as checking for the current enum type is handled in EnumBridge
+                        if (valueType.IsEnum)
+                        {
+                            throw new ArgumentException(SR.Format(SR.Arg_EnumAndObjectMustBeSameType, valueType.ToString(), _enumType.ToString()));
+                        }
+
+                        TypeCode typeCode = Convert.GetTypeCode(value);
+
+                        switch (typeCode)
+                        {
+                            case TypeCode.SByte:
+                            case TypeCode.Byte:
+                            case TypeCode.Int16:
+                            case TypeCode.UInt16:
+                            case TypeCode.Int32:
+                            case TypeCode.UInt32:
+                            case TypeCode.Int64:
+                            case TypeCode.UInt64:
+                            case TypeCode.Boolean:
+                            case TypeCode.Char:
+                                throw new ArgumentException(SR.Format(SR.Arg_EnumUnderlyingTypeAndObjectMustBeSameType, valueType.ToString(), typeof(TUnderlying).ToString()));
+                            default:
+                                throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
+                        }
                 }
             }
 
@@ -885,9 +873,9 @@ namespace System
                     return ToStringFlags(value);
                 }
 
-                if (_valueMap.TryGetValue(value, out EnumMemberInternal member))
+                if (_valueMap.TryGetValue(value, out List<EnumMemberInternal> list))
                 {
-                    return member.Name;
+                    return list[0].Name;
                 }
                 return value.ToString();
             }
@@ -929,7 +917,11 @@ namespace System
 
             private string ToStringFlags(TUnderlying value)
             {
-                List<EnumMemberInternal> members = new List<EnumMemberInternal>(_valueMap.Values); // Could use an OrderedDictionary to remove allocation
+                List<EnumMemberInternal> members = new List<EnumMemberInternal>(_valueMap.Count); // Could use an OrderedDictionary to remove allocation
+                foreach (KeyValuePair<TUnderlying, List<EnumMemberInternal>> pair in _valueMap)
+                {
+                    members.Add(pair.Value[0]);
+                }
 
                 string returnString;
                 if (value.Equals(s_operators.Zero))
@@ -957,21 +949,17 @@ namespace System
                     // items in an enum are sufficiently small and not worth the optimization.
                     while (index >= 0)
                     {
-                        TUnderlying memberValue = members[index].Value;
-                        if (index == 0 && memberValue.Equals(s_operators.Zero))
+                        EnumMemberInternal member = members[index];
+                        TUnderlying memberValue = member.Value;
+                        if (s_operators.And(result, memberValue).Equals(memberValue) && !memberValue.Equals(s_operators.Zero))
                         {
-                            break;
-                        }
-
-                        if (s_operators.And(result, memberValue).Equals(memberValue))
-                        {
-                            result = s_operators.Subtract(result, memberValue);
+                            result = s_operators.And(result, s_operators.Not(memberValue));
                             if (!firstTime)
                             {
                                 sb.Insert(0, enumSeparatorString);
                             }
 
-                            sb.Insert(0, members[index].Name);
+                            sb.Insert(0, member.Name);
                             firstTime = false;
                         }
 
@@ -1776,7 +1764,7 @@ namespace System
 
             public float And(float left, float right) => BitConverter.Int32BitsToSingle(BitConverter.SingleToInt32Bits(left) & BitConverter.SingleToInt32Bits(right));
 
-            public int CompareTo(float left, float right) => left.CompareTo(right);
+            public int CompareTo(float left, float right) => BitConverter.SingleToInt32Bits(left).CompareTo(BitConverter.SingleToInt32Bits(right));
 
             public bool IsInValueRange(ulong value) => value <= int.MaxValue || value >= unchecked((ulong)int.MinValue);
 
