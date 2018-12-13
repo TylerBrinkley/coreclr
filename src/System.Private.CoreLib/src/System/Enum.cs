@@ -94,9 +94,9 @@ namespace System
 
         public static bool TryParse(Type enumType, ReadOnlySpan<char> value, bool ignoreCase, out object result) => GetBridge(enumType).TryParse(value, ignoreCase, out result);
 
-        public static bool TryParse<TEnum>(string value, out TEnum result) where TEnum : struct, Enum => TryParse(value, false, out result);
+        public static bool TryParse<TEnum>(string value, out TEnum result) where TEnum : struct => TryParse(value, false, out result);
 
-        public static bool TryParse<TEnum>(string value, bool ignoreCase, out TEnum result) where TEnum : struct, Enum => TryParse(value.AsSpan(), ignoreCase, out result);
+        public static bool TryParse<TEnum>(string value, bool ignoreCase, out TEnum result) where TEnum : struct => EnumBridge<TEnum>.Bridge.TryParse(value.AsSpan(), ignoreCase, out result);
 
         public static bool TryParse<TEnum>(ReadOnlySpan<char> value, out TEnum result) where TEnum : struct, Enum => TryParse(value, false, out result);
 
@@ -118,16 +118,16 @@ namespace System
 
         public static object Parse(Type enumType, ReadOnlySpan<char> value, bool ignoreCase) => GetBridge(enumType).Parse(value, ignoreCase);
 
-        public static TEnum Parse<TEnum>(string value) where TEnum : struct, Enum => Parse<TEnum>(value, false);
+        public static TEnum Parse<TEnum>(string value) where TEnum : struct => Parse<TEnum>(value, false);
 
-        public static TEnum Parse<TEnum>(string value, bool ignoreCase) where TEnum : struct, Enum
+        public static TEnum Parse<TEnum>(string value, bool ignoreCase) where TEnum : struct
         {
             if (value == null)
             {
                 throw new ArgumentNullException(nameof(value));
             }
 
-            return Parse<TEnum>(value.AsSpan(), ignoreCase);
+            return EnumBridge<TEnum>.Bridge.Parse(value.AsSpan(), ignoreCase);
         }
 
         public static TEnum Parse<TEnum>(ReadOnlySpan<char> value) where TEnum : struct, Enum => Parse<TEnum>(value, false);
@@ -186,50 +186,56 @@ namespace System
 
         #region Definitions
         #region EnumBridge
-        internal static class EnumBridge<TEnum> where TEnum : struct, Enum
+        internal static class EnumBridge<TEnum>
         {
-            public readonly static IEnumBridge<TEnum> Bridge = CreateEnumBridge();
+            public readonly static IEnumBridge<TEnum> Bridge = (IEnumBridge<TEnum>)CreateEnumBridge(typeof(TEnum));
+        }
 
-            private static IEnumBridge<TEnum> CreateEnumBridge()
+        private static IEnumBridge CreateEnumBridge(Type enumType)
+        {
+            Type underlyingType = GetUnderlyingTypeInternal(enumType);
+            Type operatorsType = GetOperatorsType(underlyingType);
+            return operatorsType != null ? (IEnumBridge)Activator.CreateInstance(typeof(EnumBridge<,,>).MakeGenericType(enumType, underlyingType, operatorsType)) : null;
+        }
+
+        private static Type GetOperatorsType(Type underlyingType)
+        {
+            switch (Type.GetTypeCode(underlyingType))
             {
-                Type underlyingType = GetUnderlyingTypeInternal(typeof(TEnum));
-                switch (Type.GetTypeCode(underlyingType))
-                {
-                    case TypeCode.SByte:
-                        return new EnumBridge<TEnum, sbyte, SByteOperators>();
-                    case TypeCode.Byte:
-                        return new EnumBridge<TEnum, byte, ByteOperators>();
-                    case TypeCode.Int16:
-                        return new EnumBridge<TEnum, short, Int16Operators>();
-                    case TypeCode.UInt16:
-                        return new EnumBridge<TEnum, ushort, UInt16Operators>();
-                    case TypeCode.Int32:
-                        return new EnumBridge<TEnum, int, Int32Operators>();
-                    case TypeCode.UInt32:
-                        return new EnumBridge<TEnum, uint, UInt32Operators>();
-                    case TypeCode.Int64:
-                        return new EnumBridge<TEnum, long, Int64Operators>();
-                    case TypeCode.UInt64:
-                        return new EnumBridge<TEnum, ulong, UInt64Operators>();
-                    case TypeCode.Boolean:
-                        return new EnumBridge<TEnum, bool, BooleanOperators>();
-                    case TypeCode.Char:
-                        return new EnumBridge<TEnum, char, CharOperators>();
-                    case TypeCode.Single:
-                        return new EnumBridge<TEnum, float, SingleOperators>();
-                    case TypeCode.Double:
-                        return new EnumBridge<TEnum, double, DoubleOperators>();
-                    default:
-                        if (underlyingType == typeof(IntPtr))
-                        {
-                            return new EnumBridge<TEnum, IntPtr, IntPtrOperators>();
-                        }
-                        if (underlyingType == typeof(UIntPtr))
-                        {
-                            return new EnumBridge<TEnum, UIntPtr, UIntPtrOperators>();
-                        }
-                        return null;
-                }
+                case TypeCode.SByte:
+                    return typeof(SByteOperators);
+                case TypeCode.Byte:
+                    return typeof(ByteOperators);
+                case TypeCode.Int16:
+                    return typeof(Int16Operators);
+                case TypeCode.UInt16:
+                    return typeof(UInt16Operators);
+                case TypeCode.Int32:
+                    return typeof(Int32Operators);
+                case TypeCode.UInt32:
+                    return typeof(UInt32Operators);
+                case TypeCode.Int64:
+                    return typeof(Int64Operators);
+                case TypeCode.UInt64:
+                    return typeof(UInt64Operators);
+                case TypeCode.Boolean:
+                    return typeof(BooleanOperators);
+                case TypeCode.Char:
+                    return typeof(CharOperators);
+                case TypeCode.Single:
+                    return typeof(SingleOperators);
+                case TypeCode.Double:
+                    return typeof(DoubleOperators);
+                default:
+                    if (underlyingType == typeof(IntPtr))
+                    {
+                        return typeof(IntPtrOperators);
+                    }
+                    if (underlyingType == typeof(UIntPtr))
+                    {
+                        return typeof(UIntPtrOperators);
+                    }
+                    return null;
             }
         }
 
@@ -286,7 +292,7 @@ namespace System
             bool TryParse(ReadOnlySpan<char> value, bool ignoreCase, out object result);
         }
 
-        internal interface IEnumBridge<TEnum> : IEnumBridgeCommon where TEnum : struct, Enum
+        internal interface IEnumBridge<TEnum> : IEnumBridgeCommon
         {
             TEnum AllFlags { get; }
 

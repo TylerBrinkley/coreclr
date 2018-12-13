@@ -315,7 +315,7 @@ namespace System.Collections.Generic
     [Serializable]
     [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]
     // Needs to be public to support binary serialization compatibility
-    public sealed class EnumEqualityComparer<T> : EqualityComparer<T>, ISerializable where T : struct, Enum
+    public sealed class EnumEqualityComparer<T> : EqualityComparer<T>, ISerializable where T : struct
     {
         internal EnumEqualityComparer() { }
 
@@ -331,10 +331,10 @@ namespace System.Collections.Generic
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public override bool Equals(T x, T y) => Enum.Equals(x, y);
+        public override bool Equals(T x, T y) => Enum.EnumBridge<T>.Bridge.Equals(x, y);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public override int GetHashCode(T obj) => Enum.GetHashCode(obj);
+        public override int GetHashCode(T obj) => Enum.EnumBridge<T>.Bridge.GetHashCode(obj);
 
         // Equals method for the comparer itself.
         public override bool Equals(object obj) =>
@@ -346,9 +346,10 @@ namespace System.Collections.Generic
         internal override int IndexOf(T[] array, T value, int startIndex, int count)
         {
             int endIndex = startIndex + count;
+            Enum.IEnumBridge<T> bridge = Enum.EnumBridge<T>.Bridge;
             for (int i = startIndex; i < endIndex; i++)
             {
-                if (Enum.Equals(array[i], value)) return i;
+                if (bridge.Equals(array[i], value)) return i;
             }
             return -1;
         }
@@ -356,9 +357,10 @@ namespace System.Collections.Generic
         internal override int LastIndexOf(T[] array, T value, int startIndex, int count)
         {
             int endIndex = startIndex - count + 1;
+            Enum.IEnumBridge<T> bridge = Enum.EnumBridge<T>.Bridge;
             for (int i = startIndex; i >= endIndex; i--)
             {
-                if (Enum.Equals(array[i], value)) return i;
+                if (bridge.Equals(array[i], value)) return i;
             }
             return -1;
         }
