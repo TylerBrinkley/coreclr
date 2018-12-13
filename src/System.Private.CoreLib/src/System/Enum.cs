@@ -96,7 +96,15 @@ namespace System
 
         public static bool TryParse<TEnum>(string value, out TEnum result) where TEnum : struct => TryParse(value, false, out result);
 
-        public static bool TryParse<TEnum>(string value, bool ignoreCase, out TEnum result) where TEnum : struct => EnumBridge<TEnum>.Bridge.TryParse(value.AsSpan(), ignoreCase, out result);
+        public static bool TryParse<TEnum>(string value, bool ignoreCase, out TEnum result) where TEnum : struct
+        {
+            IEnumBridge<TEnum> bridge = EnumBridge<TEnum>.Bridge;
+            if (bridge == null)
+            {
+                throw new ArgumentException(SR.Arg_MustBeEnum, "enumType");
+            }
+            return bridge.TryParse(value.AsSpan(), ignoreCase, out result);
+        }
 
         public static bool TryParse<TEnum>(ReadOnlySpan<char> value, out TEnum result) where TEnum : struct, Enum => TryParse(value, false, out result);
 
@@ -127,7 +135,12 @@ namespace System
                 throw new ArgumentNullException(nameof(value));
             }
 
-            return EnumBridge<TEnum>.Bridge.Parse(value.AsSpan(), ignoreCase);
+            IEnumBridge<TEnum> bridge = EnumBridge<TEnum>.Bridge;
+            if (bridge == null)
+            {
+                throw new ArgumentException(SR.Arg_MustBeEnum, "enumType");
+            }
+            return bridge.Parse(value.AsSpan(), ignoreCase);
         }
 
         public static TEnum Parse<TEnum>(ReadOnlySpan<char> value) where TEnum : struct, Enum => Parse<TEnum>(value, false);
